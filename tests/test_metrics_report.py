@@ -303,6 +303,11 @@ class ParseTest(unittest.TestCase):
         self.assertEqual([e.gb for e in events], [2.1, 0.79, 1.0, 3.1, 6.1])
         self.assertEqual(events[0].where, "~/code/app-wt/search")
         self.assertEqual(events[3].pid, 1667282)
+        floor = rep.parse_log(
+            ["2026-11-01 10:31:13 STOP port 1 pid 2 6.8 GiB /x: WSL has only 1.4 GiB available (floor 1.5 GiB)"], "dev-watch"
+        )
+        self.assertEqual((floor[0].rule, floor[0].avail), ("floor", 1.4))
+        self.assertIsNone(events[0].avail)
 
     def test_parse_since(self):
         self.assertEqual(rep.parse_since("7d"), 7 * 86400)
@@ -391,6 +396,8 @@ class ImportTest(TempCase):
         joined = "\n".join(texts)
         self.assertIn("shop-a/apps/web hit the hard limit 3 times", joined)
         self.assertIn("3 stops happened because memory fell below 1.5 GiB", joined)
+        floor = next(s for s in self.r["suggestions"] if "fell below" in s["text"])
+        self.assertIn("as little as 1.2 GiB available", floor["evidence"])
         self.assertIn("2 stops of /home/dev/code/shop-a/apps/web were followed by a restart within 10 minutes", joined)
         self.assertIn("shop-b was stopped 4 times in 6 minutes after its work was done", joined)
         self.assertIn("6 of 12 stops were dev servers left running in finished worktrees", joined)
@@ -503,6 +510,7 @@ class MetricsReportTest(unittest.TestCase):
     def test_floor_with_many_servers_suggests_fewer(self):
         r = self.build(self.floor_samples(crowd=5))
         self.assertEqual(r["concurrency"]["medianDevServersAtFloorStops"], 5)
+        self.assertEqual(r["concurrency"]["lowestAvailableAtFloorStopsGb"], 1.2)
         joined = "\n".join(s["text"] for s in r["suggestions"])
         self.assertIn("Floor stops happened with 5+ dev servers running: lower slot.count", joined)
         self.assertIn(".wslconfig", joined)

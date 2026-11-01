@@ -40,6 +40,7 @@ LINE = re.compile(
     r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (WARN|STOP|WOULD-STOP|LOOP) port (\S+) pid (\d+) "
     r"(?:\S+ (?:dev|preview) )?([\d.]+) ?(GiB|G|M|K|B) (.+?): (.*)$"
 )
+AVAILABLE = re.compile(r"only ([\d.]+) GiB available")
 VERBS = {"WARN": "warn", "STOP": "stop", "WOULD-STOP": "would-stop", "LOOP": "loop"}
 
 LABELS = {
@@ -74,6 +75,7 @@ class Event:
     app: str = ""
     quiet: bool = False  # rate-limited: not written to watch.log
     servers: int | None = None  # dev servers running in that pass (metrics only)
+    avail: float | None = None  # GiB available, from the pass or from a floor stop's reason
 
 
 @dataclass
@@ -138,7 +140,10 @@ def parse_log(lines: list[str], source: str) -> list[Event]:
         except ValueError:
             continue
         verb = VERBS[verb]
-        events.append(Event(t, verb, rule_of(verb, reason), int(pid), round(float(amount) * UNITS[unit], 2), home(where), source))
+        avail = AVAILABLE.search(reason)
+        event = Event(t, verb, rule_of(verb, reason), int(pid), round(float(amount) * UNITS[unit], 2), home(where), source)
+        event.avail = float(avail.group(1)) if avail else None
+        events.append(event)
     return events
 
 
@@ -307,6 +312,7 @@ def build(inputs: Inputs, config: Config, since: float, now: float) -> dict[str,
                     app_of(s),
                     bool(a.get("quiet")),
                     len(dev),
+                    float(mem["avail"]) if mem.get("total") else None,
                 )
             )
     events.sort(key=lambda e: e.t)
@@ -495,6 +501,7 @@ def build(inputs: Inputs, config: Config, since: float, now: float) -> dict[str,
             "medianDevServersUnderFloor": _median(floor_counts),
             "medianDevServersAtFloorStops": _median(floor_event_counts),
             "floorStops": len([e for e in floor_events if e.verb == "stop"]),
+            "lowestAvailableAtFloorStopsGb": min((e.avail for e in floor_events if e.avail is not None), default=None),
         },
         "actions": actions,
         "stops": {
@@ -561,12 +568,12 @@ def suggest(r: dict[str, Any]) -> list[dict[str, str]]:
             f"{floor_stops} floor stops; median {c['medianDevServers']:g} servers otherwise, peak {c['peakDevServers']}",
         )
     elif floor_stops >= 3:
-        lowest = r["memory"]["lowestAvailableGb"]
+        lowest = c["lowestAvailableAtFloorStopsGb"]
         add(
             f"{floor_stops} stops happened because memory fell below {lim['floor']:g} GiB: run fewer dev servers or agents "
             "at once, or raise WSL's memory cap (memory= in .wslconfig).",
             f"{floor_stops} of {r['stops']['total']} stops were floor stops"
-            + (f"; lowest available {lowest} GiB" if lowest is not None else ""),
+            + (f"; as little as {lowest:g} GiB available" if lowest is not None else ""),
         )
 
     for x in r["restarts"]:
