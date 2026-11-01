@@ -1,0 +1,61 @@
+name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version: 0.17.3
+      - run: ruff check src tests
+      - run: ruff format --check src tests
+      - name: No em dashes anywhere
+        run: "! grep -rnI $'\\u2014' --exclude-dir=.git ."
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        python: ["3.11", "3.12", "3.13"]
+        include:
+          - os: macos-15
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests (stdlib unittest, no dependencies)
+        run: cd tests && python -W error::ResourceWarning -m unittest discover -s . -v
+      - name: End-to-end demo
+        if: runner.os == 'Linux'
+        run: ./demo/e2e.sh
+
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Installed package behaves like the source tree
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install .
+          DEVGUARD_BIN=/tmp/venv/bin/devguard ./demo/e2e.sh
+      - name: Zipapp behaves like the source tree
+        run: |
+          ./scripts/build-zipapp.sh
+          DEVGUARD_BIN=dist/devguard.pyz ./demo/e2e.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devguard.pyz
+          path: dist/devguard.pyz
