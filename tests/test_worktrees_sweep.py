@@ -165,6 +165,7 @@ class SweepTest(TempCase):
         for wt in (dirty, opened, unpushed, locked):
             self.assertTrue((wt / "node_modules" / "sub" / "f0.bin").exists())
 
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "needs /proc")
     def test_running_process_blocks(self):
         wt = self.finished("busy")
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], cwd=wt)

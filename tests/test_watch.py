@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from helpers import GIB, FakeProc, Repo, TempCase
+from helpers import GIB, ROOT, FakeProc, Repo, TempCase
 
 from devguard import watch
 from devguard.config import Config
@@ -171,8 +173,10 @@ class RealProcessTest(TempCase):
         bin_dir.mkdir(parents=True)
         script = bin_dir / "next"
         script.write_text("import time\nblob = bytearray(64 * 1024 * 1024)\nwhile True:\n    time.sleep(1)\n")
-        # argv[0] reads "node", like a real `node .../.bin/next dev` process.
-        child = subprocess.Popen(["node", str(script), "dev", "-p", "4999"], executable=sys.executable, cwd=self.tmp / "app")
+        # A symlink named node makes argv[0] read like a real `node .../.bin/next dev` process.
+        node = self.tmp / "node"
+        node.symlink_to(os.path.realpath(sys.executable))
+        child = subprocess.Popen([str(node), str(script), "dev", "-p", "4999"], cwd=self.tmp / "app")
         try:
             config = Config(state_dir=str(self.tmp / "state"))
             config.watch.roots = [str(self.tmp)]
@@ -238,9 +242,31 @@ class InstallTest(TempCase):
             self.assertIn("wsl.exe --shutdown", text)
 
     def test_units_quote_paths(self):
-        service, _ = watch.units(True, Path("/my configs/d.toml"), "/usr/bin")
-        self.assertIn("'/my configs/d.toml'", service)
+        service, _ = watch.units(True, Path("/my configs/100%.toml"), "/usr/bin:/mnt/c/Program Files/x")
+        self.assertIn("'/my configs/100%%.toml'", service)
+        self.assertIn('Environment="PATH=/usr/bin:/mnt/c/Program Files/x"', service)
         self.assertIn(os.path.basename(sys.executable), service)
+        self.assertIn(f'Environment="PYTHONPATH={ROOT / "src"}"', service)
+
+    def test_timer_path_is_short(self):
+        self.assertEqual(watch.timer_path("/usr/bin/git"), "/usr/local/bin:/usr/bin:/bin")
+        self.assertEqual(watch.timer_path("/opt/git/bin/git"), "/opt/git/bin:/usr/local/bin:/usr/bin:/bin")
+
+    def test_launcher_inside_a_zipapp(self):
+        fake = self.tmp / "devguard.pyz"
+        fake.write_text("")
+        with mock.patch.object(watch, "__file__", str(fake / "devguard" / "watch.py")):
+            self.assertEqual(watch.launcher(), ([sys.executable, str(fake)], None))
+
+    @unittest.skipUnless(shutil.which("systemd-analyze"), "needs systemd-analyze")
+    def test_units_pass_systemd_analyze_verify(self):
+        service, timer = watch.units(False, Path("/my configs/d.toml"), "/usr/bin:/mnt/c/Program Files/x")
+        (self.tmp / watch.SERVICE).write_text(service)
+        (self.tmp / watch.TIMER).write_text(timer)
+        files = [str(self.tmp / watch.TIMER), str(self.tmp / watch.SERVICE)]
+        result = subprocess.run(["systemd-analyze", "--user", "verify", *files], capture_output=True, text=True)
+        problems = [line for line in result.stderr.splitlines() if "devguard-watch" in line]
+        self.assertEqual(problems, [], result.stderr)
 
 
 if __name__ == "__main__":

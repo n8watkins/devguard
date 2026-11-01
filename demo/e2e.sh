@@ -104,8 +104,10 @@ while True:
     time.sleep(1)
 PY
 done
+# A symlink named node to python3 gives the fake servers a real-looking command line.
+ln -s "$(python3 -c 'import os, sys; print(os.path.realpath(sys.executable))')" "$work/node"
 start() { # start <worktree> <port> <MB>: a process whose command line is `node .../next dev -p PORT`
-	(cd "$work/wt-$1" && ALLOC_MB=$3 exec -a node python3 "$work/wt-$1/node_modules/.bin/next" dev -p "$2") &
+	(cd "$work/wt-$1" && ALLOC_MB=$3 exec "$work/node" "$work/wt-$1/node_modules/.bin/next" dev -p "$2") &
 	pids+=($!)
 }
 start done 4101 1

@@ -169,27 +169,54 @@ def unit_dir() -> Path:
     return Path(base) / "systemd" / "user"
 
 
+def launcher() -> tuple[list[str], str | None]:
+    """How to start this same devguard later: (argv prefix, PYTHONPATH or None).
+
+    A zipapp runs as `python devguard.pyz`; an installed or cloned package runs as
+    `python -m devguard` with PYTHONPATH pointing at the directory holding it."""
+    package_parent = Path(__file__).absolute().parent.parent
+    if package_parent.is_file():
+        return [sys.executable, str(package_parent)], None
+    return [sys.executable, "-m", "devguard"], str(package_parent)
+
+
 def exec_command(apply: bool, config_path: Path | None) -> list[str]:
-    """How the timer runs devguard: the same interpreter and package as this process."""
-    cmd = [sys.executable, "-m", "devguard"]
+    cmd, _ = launcher()
     if config_path:
-        cmd += ["--config", str(config_path)]
-    cmd += ["watch", "--once"]
+        cmd = [*cmd, "--config", str(config_path)]
+    cmd = [*cmd, "watch", "--once"]
     if apply:
         cmd.append("--apply")
     return cmd
 
 
-def units(apply: bool, config_path: Path | None, path_env: str) -> tuple[str, str]:
-    command = " ".join(shlex.quote(c) for c in exec_command(apply, config_path))
+def timer_path(git: str | None = None) -> str:
+    """A short PATH for the timer: system dirs plus wherever git lives. The login
+    PATH on WSL holds Windows directories with spaces that the timer does not need."""
+    dirs = ["/usr/local/bin", "/usr/bin", "/bin"]
+    git = git or shutil.which("git")
+    if git and os.path.dirname(git) not in dirs:
+        dirs.insert(0, os.path.dirname(git))
+    return ":".join(dirs)
+
+
+def _env_line(name: str, value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'Environment="{name}={escaped}"\n'
+
+
+def units(apply: bool, config_path: Path | None, path_env: str | None = None) -> tuple[str, str]:
+    command = " ".join(shlex.quote(c) for c in exec_command(apply, config_path)).replace("%", "%%")
+    _, pythonpath = launcher()
     mode = "stops servers" if apply else "dry run: logs what it would stop"
     service = (
         "[Unit]\n"
         f"Description=devguard watch ({mode})\n\n"
         "[Service]\n"
         "Type=oneshot\n"
-        f"Environment=PATH={path_env}\n"
-        f"ExecStart={command}\n"
+        + _env_line("PATH", path_env or timer_path())
+        + (_env_line("PYTHONPATH", pythonpath) if pythonpath else "")
+        + f"ExecStart={command}\n"
         "Nice=10\n"
     )
     timer = (
@@ -253,7 +280,7 @@ def install(
         return 1
     directory = directory or unit_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    service, timer = units(apply, config_path, os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"))
+    service, timer = units(apply, config_path)
     (directory / SERVICE).write_text(service)
     (directory / TIMER).write_text(timer)
     for argv in (["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", "--now", TIMER]):
