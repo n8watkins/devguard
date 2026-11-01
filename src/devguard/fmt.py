@@ -29,7 +29,9 @@ def duration(seconds: float | None) -> str:
         return f"{seconds / 86400:.1f}d"
     if seconds >= 3600:
         return f"{seconds / 3600:.1f}h"
-    return f"{seconds / 60:.0f}m"
+    if seconds >= 60:
+        return f"{seconds / 60:.0f}m"
+    return f"{seconds:.0f}s"
 
 
 def home(path: str | Path | None) -> str:
