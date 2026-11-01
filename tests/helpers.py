@@ -20,6 +20,8 @@ Path(_GIT_HOME, "gitconfig").write_text(
 )
 os.environ["GIT_CONFIG_GLOBAL"] = str(Path(_GIT_HOME, "gitconfig"))
 os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+# Never let a test write the real Windows-side status copy on a WSL machine.
+os.environ["DEVGUARD_WINDOWS_STATUS_PATH"] = "off"
 
 PAGE = os.sysconf("SC_PAGE_SIZE")
 HZ = os.sysconf("SC_CLK_TCK")

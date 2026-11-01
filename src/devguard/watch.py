@@ -14,7 +14,8 @@ again only when it grew by 0.5 GiB or 15 minutes passed. When a dev server in a
 finished worktree keeps coming back (stopped 3 times within an hour), watch logs one
 LOOP line and leaves finished servers there alone for an hour instead of stopping
 one every minute; the memory limits and the floor still apply. Each pass appends a
-sample to metrics.jsonl (watch.metrics) for `devguard report`.
+sample to metrics.jsonl (watch.metrics) for `devguard report` and rewrites
+status.json (see status.py) for trays and widgets.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import metrics
+from . import status as statusmod
 from .config import Config
 from .fmt import GIB, home, is_within, size
 from .procs import MemInfo
@@ -135,6 +137,7 @@ class WatchState:
         self.warned: dict[str, list[float]] = {}  # "verb:pid:identity" -> [time, rss] last logged
         self.stops: dict[str, list[float]] = {}  # location -> times of recent finished stops
         self.held: dict[str, float] = {}  # location -> leave finished servers alone until then
+        self.last_stop: dict | None = None  # the most recent stop, for status.json
 
     @classmethod
     def load(cls, path: Path) -> WatchState:
@@ -144,12 +147,16 @@ class WatchState:
             state.warned = {str(k): [float(v[0]), float(v[1])] for k, v in data.get("warned", {}).items()}
             state.stops = {str(k): [float(t) for t in v] for k, v in data.get("stops", {}).items()}
             state.held = {str(k): float(v) for k, v in data.get("held", {}).items()}
+            last = data.get("last_stop")
+            state.last_stop = last if isinstance(last, dict) else None
         except Exception:  # missing, corrupt or from another version: start fresh
             return cls()
         return state
 
     def save(self, path: Path) -> None:
-        data = json.dumps({"warned": self.warned, "stops": self.stops, "held": self.held}, separators=(",", ":"))
+        data = json.dumps(
+            {"warned": self.warned, "stops": self.stops, "held": self.held, "last_stop": self.last_stop}, separators=(",", ":")
+        )
         tmp = path.with_name(f".{path.name}.{os.getpid()}")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,6 +174,16 @@ class WatchState:
             self.warned[key] = [now, rss]
             return True
         return False
+
+    def record_stop(self, server: Server, reason: str, now: float) -> None:
+        self.last_stop = {
+            "time": statusmod.iso(now),
+            "server": f"{server.tool} {server.kind}",
+            "port": server.port,
+            "pid": server.pid,
+            "worktree": home(server.worktree or server.cwd),
+            "reason": reason,
+        }
 
     def holding(self, now: float) -> set[str]:
         return {where for where, until in self.held.items() if until > now}
@@ -198,12 +215,16 @@ Killer = Callable[[int, int], None]
 
 
 def stop_server(
-    server: Server, source: Source, grace: float, kill: Killer = os.kill, sleep: Callable[[float], None] = time.sleep
+    server: Server, source: Source, grace: float, kill: Killer | None = None, sleep: Callable[[float], None] = time.sleep
 ) -> list[int]:
     """SIGTERM the server's process tree, then SIGKILL survivors after `grace` seconds.
 
     A pid is only signalled while its start time still matches the snapshot, so a
     reused pid is never hit. Returns the pids that were signalled."""
+
+    # Looked up at call time (not as a default argument) so tests that patch os.kill
+    # can never reach a real process.
+    kill = kill or os.kill
 
     def alive(pids: list[int]) -> list[int]:
         return [p for p in pids if source.identity(p) == server.identities.get(p)]
@@ -226,17 +247,31 @@ def describe(s: Server) -> str:
     return f"port {s.port} pid {s.pid} {s.tool} {s.kind} {size(s.rss)} {home(s.cwd)}"
 
 
+def devguard_command() -> list[str]:
+    """argv that runs this same devguard from anywhere (for status.json readers)."""
+    cmd, pythonpath = launcher()
+    return ["env", f"PYTHONPATH={pythonpath}", *cmd] if pythonpath else cmd
+
+
+def status_document(
+    source: Source, config: Config, servers: list[Server], mem: MemInfo, snap, state: WatchState, now: float, mode: str
+) -> dict:
+    uid = getattr(source, "uid", os.getuid())
+    return statusmod.build(servers, mem, snap, uid, now, mode, state.last_stop, state.held, LOOP_HOLD_SECONDS, devguard_command())
+
+
 def run_once(
     source: Source,
     config: Config,
     apply: bool,
     log: Log,
-    kill: Killer = os.kill,
+    kill: Killer | None = None,
     sleep: Callable[[float], None] = time.sleep,
     self_pid: int | None = None,
     clock: Callable[[], float] = time.time,
 ) -> list[Action]:
-    servers = discover(source, config, self_pid=self_pid)
+    snap = source.snapshot()
+    servers = discover(source, config, snap, self_pid=self_pid)
     if config.watch.stop_finished:
         annotate(servers, config.state_path() / "fetched", config.watch.fetch_interval_minutes * 60)
     elif config.watch.metrics:
@@ -273,6 +308,7 @@ def run_once(
             action.outcome = "logged"
             log.write(f"STOP {describe(s)}: {action.reason}")
             stop_server(s, source, config.watch.grace_seconds, kill, sleep)
+            state.record_stop(s, action.reason, now)
             continue
         if action.verb == "warn":
             message = f"WARN {describe(s)}: {action.reason}"
@@ -288,7 +324,53 @@ def run_once(
     state.save(state_path)
     if config.watch.metrics:
         metrics.append(config.state_path(), metrics.entry(servers, mem, actions, apply, config, now), now)
+    stopped = {a.server.pid for a in actions if a.verb == "stop" and apply}
+    running = [s for s in servers if s.pid not in stopped]
+    try:
+        document = status_document(source, config, running, mem, snap, state, now, "apply" if apply else "dry")
+    except Exception as exc:  # the status file is optional; the pass already did its job
+        print(f"devguard: could not build status: {type(exc).__name__}: {exc}", file=sys.stderr)
+    else:
+        statusmod.write(document, config)
     return actions
+
+
+def matches(server: Server, target: str) -> bool:
+    """True when `target` (a port number or a directory) names this server."""
+    if target.isdigit():
+        return target in server.port.split(",")
+    where = str(Path(os.path.expanduser(target)).absolute())
+    return (bool(server.cwd) and is_within(server.cwd, where)) or server.worktree == where
+
+
+def stop_matching(
+    source: Source,
+    config: Config,
+    target: str,
+    log: Log,
+    kill: Killer | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    self_pid: int | None = None,
+    clock: Callable[[], float] = time.time,
+) -> list[Server]:
+    """Stop every dev or preview server on port `target`, or under directory `target`.
+
+    What a tray's Stop button runs: same SIGTERM-then-SIGKILL as watch, logged as a
+    STOP line, and remembered as the last stop in status.json."""
+    servers = [s for s in discover(source, config, self_pid=self_pid) if matches(s, target)]
+    if not servers:
+        return []
+    annotate(servers)
+    now = clock()
+    state_path = config.state_path() / STATE_FILE
+    state = WatchState.load(state_path)
+    reason = f"stopped on request (devguard stop {target})"
+    for s in servers:
+        log.write(f"STOP {describe(s)}: {reason}")
+        stop_server(s, source, config.watch.grace_seconds, kill, sleep)
+        state.record_stop(s, reason, now)
+    state.save(state_path)
+    return servers
 
 
 def loop(

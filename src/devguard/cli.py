@@ -13,6 +13,7 @@ from . import __version__, gitinfo
 from . import port as portmod
 from . import report as reportmod
 from . import slot as slotmod
+from . import status as statusmod
 from . import sweep as sweepmod
 from . import watch as watchmod
 from . import worktrees as wtmod
@@ -44,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--install", action="store_true", help="install a systemd user timer that runs every minute")
     p.add_argument("--uninstall", action="store_true", help="remove the systemd user timer")
     p.add_argument("--log", action="store_true", help="show recent watch events")
+
+    p = sub.add_parser("status", help="memory by use, dev servers by project, last stop and loop alerts")
+    p.add_argument("--json", action="store_true", help="the same document watch writes to status.json")
+
+    p = sub.add_parser("stop", help="stop the dev servers on a port or under a directory")
+    p.add_argument("target", help="a port number, or a directory (every dev server under it)")
 
     p = sub.add_parser("report", help="how the watcher behaved over time, and what to change")
     p.add_argument("--since", default="7d", help="period to cover, like 7d, 12h or 2w (default: 7d)")
@@ -168,6 +175,38 @@ def cmd_watch(args: argparse.Namespace, config: Config) -> int:
         watchmod.loop(source, config, args.apply, log)
     except KeyboardInterrupt:
         return 130
+    return 0
+
+
+def cmd_status(args: argparse.Namespace, config: Config) -> int:
+    source = default_source()
+    snap = source.snapshot()
+    servers = discover(source, config, snap)
+    annotate(servers)
+    state = watchmod.WatchState.load(config.state_path() / watchmod.STATE_FILE)
+    document = watchmod.status_document(source, config, servers, source.meminfo(), snap, state, time.time(), "status")
+    if args.json:
+        print(json.dumps(document, indent=2))
+        return 0
+    print(statusmod.render(document))
+    written = config.state_path() / statusmod.FILE
+    try:
+        last = json.loads(written.read_text()).get("updated_at", "?")
+        print(f"\nWatch writes {home(written)} every pass (last: {last}).")
+    except (OSError, ValueError):
+        print(f"\nNo {home(written)} yet; `devguard watch` writes it on every pass.")
+    windows = statusmod.windows_path(config)
+    if windows:
+        print(f"Windows copy: {windows}")
+    return 0
+
+
+def cmd_stop(args: argparse.Namespace, config: Config) -> int:
+    log = watchmod.Log(config.state_path() / "watch.log")
+    stopped = watchmod.stop_matching(default_source(), config, args.target, log)
+    if not stopped:
+        print(f"devguard stop: no dev server on port {args.target} or under it", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -358,6 +397,8 @@ def cmd_config(args: argparse.Namespace, config: Config) -> int:
         f"stop finished: {'yes' if w.stop_finished else 'no'}"
     )
     print(f"             metrics: {config.state_path() / 'metrics.jsonl' if w.metrics else 'off'}")
+    windows = statusmod.windows_path(config)
+    print(f"             status: {config.state_path() / statusmod.FILE}" + (f", Windows copy {windows}" if windows else ""))
     if w.roots:
         print(f"             only under: {', '.join(w.roots)}")
     if w.protected_paths:
@@ -378,6 +419,8 @@ def cmd_config(args: argparse.Namespace, config: Config) -> int:
 COMMANDS = {
     "ps": cmd_ps,
     "watch": cmd_watch,
+    "status": cmd_status,
+    "stop": cmd_stop,
     "report": cmd_report,
     "port": cmd_port,
     "slot": cmd_slot,

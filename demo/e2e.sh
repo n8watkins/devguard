@@ -32,6 +32,7 @@ floor_gb = 0
 grace_seconds = 3
 fetch_interval_minutes = 0
 metrics = true
+windows_status_path = "$work/windows/status.json"
 [slot]
 dir = "$work/slots"
 [sweep]
@@ -136,6 +137,26 @@ expect "merged server stopped" "$(alive "$done_pid")" no
 expect "big server stopped" "$(alive "$big_pid")" no
 expect "small open server untouched" "$(alive "$small_pid")" yes
 contains "watch log has the stops" "$(dg watch --log)" "STOP port 4101"
+
+step "status: what watch wrote for trays, and devguard status"
+status_field() { python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(eval(sys.argv[2], {}, {"d": d}))' "$@"; }
+expect "status.json has the schema version" "$(status_field "$work/state/status.json" 'd["schema_version"]')" 1
+expect "status.json lists only the running server" "$(status_field "$work/state/status.json" 'd["server_count"]')" 1
+contains "status.json remembers the last stop" "$(status_field "$work/state/status.json" 'd["last_stop"]["port"]')" "410"
+expect "the Windows copy matches" "$(cmp -s "$work/state/status.json" "$work/windows/status.json" && echo same)" same
+out=$(dg status)
+echo "$out"
+contains "status shows the running server" "$out" ":4103"
+expect "status --json is valid JSON" "$(dg status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["mode"])')" status
+
+step "stop: what a tray's Stop button runs"
+dg stop 4999
+expect "an unknown port exits 1" "$?" 1
+dg stop 4103
+expect "a known port exits 0" "$?" 0
+sleep 0.5
+expect "the server on that port stopped" "$(alive "$small_pid")" no
+contains "the stop is logged" "$(dg watch --log)" "devguard stop 4103"
 
 step "report: what the watcher did, from metrics.jsonl and an imported dev-watch log"
 expect "metrics.jsonl has one sample per pass" "$(wc -l <"$work/state/metrics.jsonl" | tr -d ' ')" 2

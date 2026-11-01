@@ -66,6 +66,12 @@ memory_exempt_env = []
 # Append one compact JSON sample per pass to <state_dir>/metrics.jsonl (memory, every
 # dev server, actions taken) for `devguard report`. Rotated: about 30 days, at most 20 MB.
 metrics = true
+# Each pass also writes a small <state_dir>/status.json (memory, servers by project,
+# memory by use, last stop, restart-loop alerts) for trays and widgets. On WSL it
+# writes a copy where Windows programs can read it without calling into WSL:
+# empty means /mnt/c/Users/<windows user>/AppData/Local/devguard/status.json,
+# "off" turns the copy off, anything else is the path to write.
+windows_status_path = ""
 
 [port]
 # Ports are base + (sha1(absolute path) mod range), so 4000-4999 by default.
@@ -129,6 +135,7 @@ class WatchConfig:
     protected_paths: list[str] = field(default_factory=list)
     memory_exempt_env: list[str] = field(default_factory=list)
     metrics: bool = True
+    windows_status_path: str = ""
 
 
 @dataclass

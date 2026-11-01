@@ -34,6 +34,8 @@ class MemInfo:
     total: int
     available: int
     swap_used: int
+    cached: int = 0  # page cache and reclaimable slabs (the buff/cache column of `free`)
+    swap_total: int = 0
 
 
 @dataclass
@@ -227,7 +229,9 @@ class LinuxProcSource:
         except (OSError, ValueError):
             pass
         total = info.get("MemTotal", 0)
-        return MemInfo(total, info.get("MemAvailable", total), info.get("SwapTotal", 0) - info.get("SwapFree", 0))
+        swap_total = info.get("SwapTotal", 0)
+        cached = info.get("Buffers", 0) + info.get("Cached", 0) + info.get("SReclaimable", 0)
+        return MemInfo(total, info.get("MemAvailable", total), swap_total - info.get("SwapFree", 0), cached, swap_total)
 
 
 Runner = Callable[[list[str]], str]

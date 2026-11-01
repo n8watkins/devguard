@@ -9,6 +9,7 @@ next dev -p $(devguard port)         # a stable port per worktree, no collisions
 devguard slot -- npx playwright test # at most 4 heavy jobs at once across all agents
 devguard sweep                       # dry run: build output in finished worktrees you can delete
 devguard report --since 7d           # how the watcher behaved and what to change
+devguard status                      # memory by use, servers by project, last stop (also status.json)
 ```
 
 ## Why
@@ -70,7 +71,7 @@ A Bun or Go binary would start a little faster, but it would add a toolchain to 
 ## Commands
 
 Every command prints plain text by default.
-`ps`, `worktrees`, `sweep` and `report` also take `--json` for scripts and agents.
+`ps`, `status`, `worktrees`, `sweep` and `report` also take `--json` for scripts and agents.
 
 ### devguard ps
 
@@ -145,6 +146,42 @@ Each pass also records a small sample in `<state_dir>/metrics.jsonl`; see [Monit
 | `--log` | Show recent events. |
 
 A good way to start: `devguard watch --install`, read `devguard watch --log` for a day, then `devguard watch --install --apply`.
+
+### devguard status
+
+A one-screen summary: memory, what uses it, the dev servers grouped by worktree, the last stop and any restart-loop alerts.
+
+```console
+$ devguard status
+Memory: 15.2G used of 19.5G, 4.4G available, 2.7G cache, 8.6G of 16.0G swap in use
+By use:  dev servers 10.4G (6), agents 2.6G (63), builds/tests 1.6G (10), other 0.1G (48)
+
+ 10.4G  app            ~/code/app-wt/login  (next dev :4102 6.7G, next dev :4103 3.7G)
+
+Last stop: 2026-11-01T17:48:44Z next dev port 4101 ~/code/app-wt/search: its work is done (branch feat/search is merged into origin/main)
+
+Watch writes ~/.local/state/devguard/status.json every pass (last: 2026-11-01T19:40:19Z).
+Windows copy: /mnt/c/Users/me/AppData/Local/devguard/status.json
+```
+
+"By use" sorts every process of your user into one bucket, in this order: dev servers (with their whole process tree), builds and tests (`next build`, `npm run build:*`, `playwright test`, `tsc`, `cargo test` and the like, with everything below them), agent sessions (`claude`, `codex` and their remaining children such as MCP servers), and other.
+The numbers are resident memory, so shared pages count more than once; treat them as an upper bound.
+
+`--json` prints the same document that `devguard watch` writes to `status.json` on every pass (see [Status file](#status-file)).
+`devguard status` itself only reads; it never writes the file.
+
+### devguard stop
+
+Stops the dev servers on a port, or every dev server under a directory, the same way watch does (SIGTERM, then SIGKILL after `grace_seconds`), logs a `STOP` line and records it as the last stop in `status.json`.
+It is what a tray's Stop button runs.
+
+```console
+$ devguard stop 4102
+2026-11-01 11:52:10 STOP port 4102 pid 2433380 next dev 4.7G ~/code/app-wt/login: stopped on request (devguard stop 4102)
+$ devguard stop ~/code/app-wt/search
+```
+
+It exits with 1 when nothing matches.
 
 ### devguard port
 
@@ -273,6 +310,46 @@ It is rotated once a day (or at 2 MB) into `metrics.jsonl.<timestamp>`; files ol
 A failed write (full disk, read-only state dir) prints a message and never stops the watcher.
 Turn it off with `watch.metrics = false`.
 
+### Status file
+
+Every watch pass also rewrites `<state_dir>/status.json`, a small (a few KB) summary for trays, widgets and status bars.
+It is written atomically (temp file, then rename), so a reader never sees half a file, and failing to write it never stops a pass.
+
+On WSL with `/mnt/c` mounted, the pass writes a second copy on the Windows side, by default `/mnt/c/Users/<you>/AppData/Local/devguard/status.json` (`%LOCALAPPDATA%\devguard\status.json` from Windows).
+A Windows program can then show WSL's memory by reading a file, without running `wsl.exe`, which would boot a stopped WSL VM and undo `wsl --shutdown`.
+devguard finds the Windows user once and remembers it in `<state_dir>/windows-user`: the only profile under `C:\Users` it can read, or else `%USERNAME%` from `cmd.exe`.
+`watch.windows_status_path` sets another path, or `"off"` turns the copy off; `$DEVGUARD_WINDOWS_STATUS_PATH` overrides both.
+The file updates once a minute while the timer runs, so a copy older than a few minutes means WSL is idle or shut down.
+
+```json
+{
+  "schema_version": 1,
+  "updated_at": "2026-11-01T19:40:19Z",
+  "updated_unix": 1793562019,
+  "mode": "apply",
+  "distro": "Ubuntu-24.04",
+  "command": ["/home/me/.local/share/uv/tools/devguard/bin/python", "-m", "devguard"],
+  "memory": {"total_gb": 19.53, "available_gb": 4.4, "used_gb": 15.13, "cache_gb": 2.7, "swap_used_gb": 8.6, "swap_total_gb": 16.0},
+  "server_count": 2,
+  "projects": [
+    {"name": "app", "branch": "feat/login", "worktree": "~/code/app-wt/login", "path": "/home/me/code/app-wt/login",
+     "servers": [{"pid": 2433380, "kind": "dev", "tool": "next", "port": "4102", "rss_gb": 6.7, "state": "open", "dir": "apps/web"}],
+     "total_rss_gb": 6.7}
+  ],
+  "categories": {"dev_servers": {"gb": 10.4, "processes": 6}, "agent_sessions": {"gb": 2.6, "processes": 63},
+                 "builds_tests": {"gb": 1.6, "processes": 10}, "other": {"gb": 0.1, "processes": 48}},
+  "last_stop": {"time": "2026-11-01T17:48:44Z", "server": "next dev", "port": "4101", "pid": 2433379,
+                "worktree": "~/code/app-wt/search", "reason": "its work is done (branch feat/search is merged into origin/main)"},
+  "alerts": [{"kind": "loop", "where": "~/code/app-wt/dino", "since": "2026-11-01T18:53:00Z", "until": "2026-11-01T19:53:00Z"}]
+}
+```
+
+`mode` is `apply` or `dry` for a watch pass (and `status` in `devguard status --json`).
+`projects` holds only running servers, grouped by worktree and sorted by memory; `path` is absolute, `worktree` is shortened.
+`command` runs this same devguard from anywhere (append `stop <port>`, for example); it may start with `env PYTHONPATH=...` when devguard runs from a clone.
+`alerts` lists the places where watch detected a stop-restart loop and leaves finished servers alone for now.
+`schema_version` changes only when a field is removed or changes meaning; new fields can appear at any time.
+
 ### devguard report
 
 `devguard report` reads the metrics (and, for times they do not cover, `watch.log`) and summarizes a period, the last 7 days by default:
@@ -387,6 +464,7 @@ An unknown key is an error, so a typo never silently falls back to a default.
 | `watch.protected_paths` | `[]` | Never stop servers under these paths. |
 | `watch.memory_exempt_env` | `[]` | Dev servers whose environment has one of these variables skip `soft_gb` and `hard_gb`. The floor still applies. Linux only. |
 | `watch.metrics` | `true` | Append one sample per pass to `<state_dir>/metrics.jsonl` for `devguard report` (see [Monitoring](#monitoring)). |
+| `watch.windows_status_path` | `""` | Where the Windows-side copy of `status.json` goes. Empty means `/mnt/c/Users/<windows user>/AppData/Local/devguard/status.json` on WSL (nothing elsewhere); `"off"` turns it off. See [Status file](#status-file). |
 | `port.base` | `4000` | First port. |
 | `port.range` | `1000` | Number of ports. |
 | `port.write_file` | `false` | Also write `<dir>/.dev-port`. |
@@ -444,6 +522,9 @@ devguard's floor uses Linux's `MemAvailable`, which is what is left inside that 
 When Windows itself is busy (browsers, IDEs), it can run short before WSL reaches its cap, so keep the cap a few GB below what Windows can really spare rather than lowering `floor_gb`.
 `autoMemoryReclaim=dropcache` (or `gradual`) in the `[experimental]` section of `.wslconfig` returns cached memory to Windows sooner.
 
+**Windows programs can read WSL's status without waking it.**
+Every watch pass writes a copy of `status.json` under your Windows profile (see [Status file](#status-file)), so a tray icon can show WSL memory by reading a file instead of running `wsl.exe`, which would boot a stopped WSL VM.
+
 **Windows processes are invisible.**
 devguard sees only Linux processes, so a dev server started from PowerShell or a Windows terminal is not listed or stopped.
 
@@ -475,6 +556,8 @@ devguard is meant to run unattended, so it is conservative by default.
 - `main`, `master` and detached HEADs are never finished.
 - `watch.roots` limits it to your agents' directories and `watch.protected_paths` excludes some entirely.
 - Its metrics and state files are private (mode 600), and failing to write them never stops a pass.
+  The same goes for `status.json` and its Windows copy (mode 644 there, since Windows reads it).
+- `devguard stop` only stops dev and preview servers of your user that run on the given port or under the given directory, with the same start-time check.
 - `devguard report` only reads; `--import-dev-watch` never changes the imported log.
 
 **sweep**
@@ -508,7 +591,7 @@ Only one `sweep --apply` runs at a time, and each one writes a JSON receipt (the
 | Code | Meaning |
 | --- | --- |
 | `0` | Success. For `slot`, the command's own exit code is passed through instead. |
-| `1` | A runtime error, a port collision in `port --list`, or a sweep action that was refused or failed. |
+| `1` | A runtime error, a port collision in `port --list`, a sweep action that was refused or failed, or `stop` found no matching server. |
 | `2` | Invalid arguments or config. |
 | `75` | `slot --timeout` expired before a slot was free. |
 | `126`, `127` | `slot` could not run the command, or did not find it. |
