@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/ruff-action@v3
+      - uses: astral-sh/ruff-action@v4
         with:
           version: 0.17.3
       - run: ruff check src tests
@@ -55,7 +55,7 @@ jobs:
         run: |
           ./scripts/build-zipapp.sh
           DEVGUARD_BIN=dist/devguard.pyz ./demo/e2e.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: devguard.pyz
           path: dist/devguard.pyz
