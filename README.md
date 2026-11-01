@@ -8,6 +8,7 @@ devguard watch --install --apply     # every minute: stop runaway and finished d
 next dev -p $(devguard port)         # a stable port per worktree, no collisions between agents
 devguard slot -- npx playwright test # at most 4 heavy jobs at once across all agents
 devguard sweep                       # dry run: build output in finished worktrees you can delete
+devguard report --since 7d           # how the watcher behaved and what to change
 ```
 
 ## Why
@@ -69,7 +70,7 @@ A Bun or Go binary would start a little faster, but it would add a toolchain to 
 ## Commands
 
 Every command prints plain text by default.
-`ps`, `worktrees` and `sweep` also take `--json` for scripts and agents.
+`ps`, `worktrees`, `sweep` and `report` also take `--json` for scripts and agents.
 
 ### devguard ps
 
@@ -125,6 +126,15 @@ $ devguard watch --once --apply
 A stopped server gets SIGTERM, then SIGKILL after `grace_seconds`.
 Restart it by hand when you need it again.
 Every event goes to `<state_dir>/watch.log`; `devguard watch --log` shows the latest ones.
+
+Repeated lines are rate-limited, so the log stays readable when the timer runs every minute: a server's `WARN` (or `WOULD-STOP` in a dry run) is logged once, then again only when it has grown by 0.5 GiB or 15 minutes have passed.
+The skipped repeats are still printed, just not written to the log.
+
+When a dev server in a finished worktree keeps coming back (stopped 3 times within an hour), something is restarting it, usually an agent.
+Instead of stopping it every minute forever, watch logs one `LOOP` line and leaves finished servers in that directory alone for an hour.
+The memory limits and the floor still apply to them.
+
+Each pass also records a small sample in `<state_dir>/metrics.jsonl`; see [Monitoring](#monitoring).
 
 | Flag | What it does |
 | --- | --- |
@@ -243,6 +253,119 @@ mkdir -p ~/.config/devguard
 devguard config --default > ~/.config/devguard/config.toml
 ```
 
+## Monitoring
+
+devguard keeps a record of every watch pass, so you can see how the watcher behaves over time and tune it.
+
+### What is recorded
+
+Each pass appends one JSON line to `<state_dir>/metrics.jsonl`:
+the time, total and available memory, swap in use, the limits in effect, and for every dev server its kind, tool, port, project, worktree (shortened to `~/...`), subdirectory, branch and state, memory of its process tree, uptime and whether it is memory-exempt.
+It also lists the actions of that pass (warn, stop, would-stop, or hold during a restart loop) with their reason, and whether the pass was a dry run.
+
+```json
+{"t":1793300013,"mode":"apply","mem":{"total":19.5,"avail":6.2,"swap":1.1},"lim":{"soft":3.0,"hard":5.0,"floor":1.5},"srv":[{"pid":2433380,"kind":"dev","tool":"next","port":"4102","proj":"app","wt":"~/code/app-wt/login","state":"open","gb":3.4,"up":1260,"dir":"apps/web","branch":"feat/login"}],"act":[{"verb":"warn","pid":2433380,"rule":"soft","why":"over 3 GiB, restart it soon"}]}
+```
+
+Numbers are rounded to keep lines small, typically 200-300 bytes per running server.
+The file is created with mode 600.
+It is rotated once a day (or at 2 MB) into `metrics.jsonl.<timestamp>`; files older than 30 days are deleted, and the oldest go first when all of them pass 20 MB.
+A failed write (full disk, read-only state dir) prints a message and never stops the watcher.
+Turn it off with `watch.metrics = false`.
+
+### devguard report
+
+`devguard report` reads the metrics (and, for times they do not cover, `watch.log`) and summarizes a period, the last 7 days by default:
+
+- passes recorded, time spent under the memory floor and near it (less than 1 GiB above it), lowest available memory, peak use and peak swap;
+- how many dev servers run at once (median and peak), and how many ran when memory fell below the floor;
+- warnings and stops by reason: hard limit, floor, branch merged, branch deleted on origin, worktree removed;
+- repeat offenders: the apps (project plus subdirectory, the same across worktrees) that pass `soft_gb` or hit `hard_gb` most, with their typical peak and how long after start they passed each limit;
+- stops followed by a new server in the same directory within 10 minutes, a sign that the stop was disruptive, and stop-restart loops (3 or more stops, each within 30 minutes of the last);
+- peaks of memory-exempt servers, and the most expensive projects in GiB-hours;
+- **What to change**: a few rule-based suggestions, each with the numbers behind it, shown only when the data supports them.
+
+| Flag | What it does |
+| --- | --- |
+| `--since 7d` | The period: a number with `m`, `h`, `d` or `w`. |
+| `--json` | Everything as JSON. |
+| `--import-dev-watch PATH` | Also read the log of the older `dev-watch` script (its `WARN` and `STOP` lines), marked as imported. It has events only, no memory samples, so the memory sections cover devguard's own passes. The file is only read. |
+
+An example from a machine where agents run several worktrees of a Next.js monorepo:
+
+```console
+$ devguard report --since 14d --import-dev-watch ~/.local/state/dev-watch/log
+devguard report: 2026-10-18 09:00 to 2026-11-01 09:00
+Limits: soft 3 GiB, hard 5 GiB, floor 1.5 GiB
+Watch passes recorded: 8640 (8640 apply), 2026-10-26 09:01 to 2026-11-01 09:00
+Events: 214 devguard, 2026-10-26 10:12 to 2026-11-01 08:41
+Events: 409 imported from dev-watch log ~/.local/state/dev-watch/log (events only, no memory samples), 2026-10-19 10:42 to 2026-10-26 08:31
+
+Memory
+  under the floor:  14m (14 passes)
+  near the floor:   3.1h (186 passes with less than floor + 1 GiB available)
+  lowest available: 1.1G; peak used 18.4G; peak swap 4.9G
+  dev servers at once: median 3, peak 7; median 6 while under the floor; median 6 at floor stops
+
+Actions: events (distinct servers)
+  ACTION                             DEVGUARD  DEV-WATCH (IMPORTED)
+  warned: over soft_gb               161 (24)  343 (31)
+  stopped: branch merged               21 (9)  22 (22)
+  stopped: over hard_gb                12 (12)  16 (16)
+  stopped: branch deleted on origin      6 (6)  13 (13)
+  stopped: memory below floor_gb         5 (5)  8 (8)
+  stopped: worktree removed              2 (2)  7 (7)
+  restart loop: left running             2 (2)  -
+
+Repeat offenders (dev servers over soft_gb)
+  APP                    RUNS>SOFT  LOG>SOFT  HARD  FLOOR  PEAK  TO-SOFT  TO-HARD  WORKTREES
+  app apps/hub               19/23        23    21      9  5.1G       9m      41m  12
+  app apps/web                7/31         8     5      0  4.2G      52m     2.4h  9
+  site                        1/12         1     2      0  3.4G      3.1h       -  2
+  RUNS>SOFT: runs over soft_gb / runs seen in metrics. LOG>SOFT: servers over soft_gb in log-only data.
+  PEAK: typical peak of those servers. TO-SOFT, TO-HARD: median uptime when they passed the limit.
+
+Stops followed by a restart in the same place within 10 minutes
+  31 of 112 stops
+   10 of  12  ~/code/app-wt/dino (10 merged)
+    6 of   8  ~/code/app-wt/booking/apps/hub (6 hard)
+  Stop-restart loops (3+ stops, each within 30 minutes of the last):
+     10 stops in  64m  ~/code/app-wt/dino (merged, 2026-10-26 18:53)
+      8 stops in  68m  ~/code/app-wt/booking/apps/hub (hard, 2026-10-27 16:05)
+  devguard detected 2 loop(s) and left those servers running (LOOP lines in watch.log).
+
+Memory-exempt servers
+  app apps/hub: 6 runs, peak 7.2G, median peak 6.1G
+
+Most expensive projects (GiB-hours of dev server memory)
+    612.4   81%  app
+    143.0   19%  site
+
+What to change
+  - app apps/hub passed 3 GiB in 19 of 23 runs, median 9m after start: try NODE_OPTIONS=--max-old-space-size=3072 or Turbopack (`next dev --turbopack`).
+    evidence: typical peak 5.1 GiB, 21 hard-limit stops, 12 worktrees
+  - Floor stops happened with 6+ dev servers running: lower slot.count or the number of parallel agents, or raise WSL's memory cap (memory= in .wslconfig).
+    evidence: 13 floor stops; median 3 servers otherwise, peak 7
+  - 6 stops of ~/code/app-wt/booking/apps/hub were followed by a restart within 10 minutes: consider raising hard_gb or adding it to watch.protected_paths.
+    evidence: 6 of 8 stops there were restarted soon after
+  - ~/code/app-wt/dino was stopped 10 times in 64 minutes after its work was done: something keeps restarting it; remove the worktree or find what restarts it.
+    evidence: stop-restart loop, reason merged, dev-watch data
+  - 71 of 112 stops were dev servers left running in finished worktrees: have agents stop their dev server when the branch merges, and remove merged worktrees.
+    evidence: stopped: branch merged: 43, stopped: branch deleted on origin: 19, stopped: worktree removed: 9
+```
+
+The suggestions it can make:
+
+| Suggestion | Fires when |
+| --- | --- |
+| Cap an app's heap (`NODE_OPTIONS=--max-old-space-size=3072`) or try Turbopack | An app passed `soft_gb` in at least half of 3 or more runs, or hit `hard_gb` 3 or more times. |
+| Run fewer servers or agents at once, or raise WSL's memory cap | 2 or more floor stops happened with at least 4 dev servers running (and 2 more than usual), or 3 or more floor stops in log-only data. |
+| Raise `hard_gb` or protect a directory | 2 or more hard-limit or floor stops in one directory were followed by a restart within 10 minutes. |
+| Remove the worktree or find what restarts it | A finished worktree's server was stopped 3 or more times, each within 30 minutes of the last. |
+| Stop dev servers when a branch merges, remove merged worktrees | At least 5 stops, and half or more of them, were for finished work. |
+| Rate-limit warnings | 10 or more warnings in a row were logged for one server (the old dev-watch did this; devguard now rate-limits). |
+| Turn on `--apply` | Watch ran only in dry run and would have stopped servers. |
+
 ## Configuration
 
 The config file is `~/.config/devguard/config.toml` (or `$XDG_CONFIG_HOME/devguard/config.toml`, or `$DEVGUARD_CONFIG`, or `--config PATH`).
@@ -263,6 +386,7 @@ An unknown key is an error, so a typo never silently falls back to a default.
 | `watch.roots` | `[]` | Only manage servers whose working directory is under one of these paths. Empty means all of yours. |
 | `watch.protected_paths` | `[]` | Never stop servers under these paths. |
 | `watch.memory_exempt_env` | `[]` | Dev servers whose environment has one of these variables skip `soft_gb` and `hard_gb`. The floor still applies. Linux only. |
+| `watch.metrics` | `true` | Append one sample per pass to `<state_dir>/metrics.jsonl` for `devguard report` (see [Monitoring](#monitoring)). |
 | `port.base` | `4000` | First port. |
 | `port.range` | `1000` | Number of ports. |
 | `port.write_file` | `false` | Also write `<dir>/.dev-port`. |
@@ -350,6 +474,8 @@ devguard is meant to run unattended, so it is conservative by default.
 - A branch counts as merged only after it was pushed to its own upstream; a fresh branch cut from `main` is an ancestor of `main` too, and is left alone.
 - `main`, `master` and detached HEADs are never finished.
 - `watch.roots` limits it to your agents' directories and `watch.protected_paths` excludes some entirely.
+- Its metrics and state files are private (mode 600), and failing to write them never stops a pass.
+- `devguard report` only reads; `--import-dev-watch` never changes the imported log.
 
 **sweep**
 
@@ -396,6 +522,7 @@ devguard replaces a handful of personal scripts; if you used them, this is the m
 | `dev-watch status` | `devguard ps` |
 | `dev-watch enforce` | `devguard watch --once --apply` |
 | `dev-watch log` | `devguard watch --log` |
+| `~/.local/state/dev-watch/log` | `devguard report --import-dev-watch ~/.local/state/dev-watch/log` reads it as a baseline |
 | `dev-watch.timer` | `devguard watch --install --apply` (disable the old timer first so two watchers do not compete) |
 | `~/.config/dev-watch.conf` `SOFT_GB` etc. | `[watch]` `soft_gb`, `hard_gb`, `floor_gb`, `min_victim_gb` |
 | `dev-port.sh` | `devguard port` (same numbers; `.dev-port` is now opt-in with `--write`) |

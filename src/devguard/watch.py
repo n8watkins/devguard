@@ -8,11 +8,19 @@ Rules, applied in order on every pass:
      server that uses more than min_victim_gb.
 Servers under watch.protected_paths are never stopped. Without --apply nothing is
 stopped; every decision is logged as WOULD-STOP or WARN.
+
+Repeated lines are rate-limited: a server's WARN (or WOULD-STOP) is logged once, then
+again only when it grew by 0.5 GiB or 15 minutes passed. When a dev server in a
+finished worktree keeps coming back (stopped 3 times within an hour), watch logs one
+LOOP line and leaves finished servers there alone for an hour instead of stopping
+one every minute; the memory limits and the floor still apply. Each pass appends a
+sample to metrics.jsonl (watch.metrics) for `devguard report`.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import shlex
 import shutil
@@ -25,23 +33,36 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from . import metrics
 from .config import Config
 from .fmt import GIB, home, is_within, size
 from .procs import MemInfo
 from .servers import Server, Source, annotate, discover
 
 LOG_MAX_BYTES = 1_000_000
+STATE_FILE = "watch-state.json"
+WARN_REPEAT_SECONDS = 15 * 60
+WARN_GROWTH_BYTES = GIB // 2
+LOOP_STOPS = 3
+LOOP_WINDOW_SECONDS = 60 * 60
+LOOP_HOLD_SECONDS = 60 * 60
+FINISHED_RULES = ("merged", "gone", "removed")
 
 
 @dataclass
 class Action:
-    verb: str  # stop | warn
+    verb: str  # stop | warn | hold (a finished server left running during a restart loop)
     server: Server
     reason: str
+    rule: str = ""  # merged | gone | removed | hard | soft | floor
+    outcome: str = ""  # set by run_once: logged | quiet (rate-limited) | hold | loop
 
 
-def plan(servers: list[Server], mem: MemInfo, config: Config) -> list[Action]:
+def plan(servers: list[Server], mem: MemInfo, config: Config, held: set[str] | None = None) -> list[Action]:
+    """The actions for one pass. Finished servers at a `held` location (a restart loop)
+    get a "hold" action instead of a stop and stay subject to the memory rules."""
     w = config.watch
+    held = held or set()
     protected = [str(Path(os.path.expanduser(p)).absolute()) for p in w.protected_paths]
 
     def is_protected(s: Server) -> bool:
@@ -52,17 +73,19 @@ def plan(servers: list[Server], mem: MemInfo, config: Config) -> list[Action]:
     candidates = [s for s in servers if not is_protected(s)]
     if w.stop_finished:
         for s in candidates:
-            if s.finished:
-                actions.append(Action("stop", s, f"its work is done ({s.reason})"))
+            if s.finished and metrics.location(s) in held:
+                actions.append(Action("hold", s, f"its work is done ({s.reason})", s.state))
+            elif s.finished:
+                actions.append(Action("stop", s, f"its work is done ({s.reason})", s.state))
                 stopped.add(s.pid)
     for s in candidates:
         if s.pid in stopped or s.kind != "dev" or s.exempt_memory:
             continue
         if s.rss > w.hard_gb * GIB:
-            actions.append(Action("stop", s, f"over the {w.hard_gb:g} GiB limit"))
+            actions.append(Action("stop", s, f"over the {w.hard_gb:g} GiB limit", "hard"))
             stopped.add(s.pid)
         elif s.rss > w.soft_gb * GIB:
-            actions.append(Action("warn", s, f"over {w.soft_gb:g} GiB, restart it soon"))
+            actions.append(Action("warn", s, f"over {w.soft_gb:g} GiB, restart it soon", "soft"))
     if mem.total and mem.available < w.floor_gb * GIB:
         victims = [s for s in candidates if s.kind == "dev" and s.pid not in stopped and s.rss > w.min_victim_gb * GIB]
         if victims:
@@ -72,6 +95,7 @@ def plan(servers: list[Server], mem: MemInfo, config: Config) -> list[Action]:
                     "stop",
                     victim,
                     f"only {mem.available / GIB:.1f} GiB available (floor {w.floor_gb:g} GiB); this is the largest dev server",
+                    "floor",
                 )
             )
     return actions
@@ -81,6 +105,11 @@ class Log:
     def __init__(self, path: Path, echo: Callable[[str], None] | None = print) -> None:
         self.path = path
         self.echo = echo
+
+    def show(self, message: str) -> None:
+        """Echo a line without writing it to the log file (rate-limited repeats)."""
+        if self.echo:
+            self.echo(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}")
 
     def write(self, message: str) -> None:
         line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}"
@@ -94,6 +123,75 @@ class Log:
             handle.write(line + "\n")
         if self.echo:
             self.echo(line)
+
+
+class WatchState:
+    """What earlier passes logged and stopped, kept in <state_dir>/watch-state.json.
+
+    The timer starts a fresh process every minute, so rate limits live on disk. A
+    missing or unreadable file just means a fresh start; saving never raises."""
+
+    def __init__(self) -> None:
+        self.warned: dict[str, list[float]] = {}  # "verb:pid:identity" -> [time, rss] last logged
+        self.stops: dict[str, list[float]] = {}  # location -> times of recent finished stops
+        self.held: dict[str, float] = {}  # location -> leave finished servers alone until then
+
+    @classmethod
+    def load(cls, path: Path) -> WatchState:
+        state = cls()
+        try:
+            data = json.loads(path.read_text())
+            state.warned = {str(k): [float(v[0]), float(v[1])] for k, v in data.get("warned", {}).items()}
+            state.stops = {str(k): [float(t) for t in v] for k, v in data.get("stops", {}).items()}
+            state.held = {str(k): float(v) for k, v in data.get("held", {}).items()}
+        except Exception:  # missing, corrupt or from another version: start fresh
+            return cls()
+        return state
+
+    def save(self, path: Path) -> None:
+        data = json.dumps({"warned": self.warned, "stops": self.stops, "held": self.held}, separators=(",", ":"))
+        tmp = path.with_name(f".{path.name}.{os.getpid()}")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as handle:
+                handle.write(data)
+            tmp.replace(path)
+        except OSError:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+
+    def should_log(self, key: str, rss: int, now: float) -> bool:
+        last = self.warned.get(key)
+        if last is None or rss >= last[1] + WARN_GROWTH_BYTES or now - last[0] >= WARN_REPEAT_SECONDS:
+            self.warned[key] = [now, rss]
+            return True
+        return False
+
+    def holding(self, now: float) -> set[str]:
+        return {where for where, until in self.held.items() if until > now}
+
+    def finished_stop(self, where: str, now: float) -> str:
+        """Record a finished stop at `where`: stop, or loop when it is the next one after
+        LOOP_STOPS within the window (finished servers there are then held)."""
+        recent = [t for t in self.stops.get(where, []) if now - t < LOOP_WINDOW_SECONDS]
+        if len(recent) >= LOOP_STOPS:
+            self.stops.pop(where, None)
+            self.held[where] = now + LOOP_HOLD_SECONDS
+            return "loop"
+        self.stops[where] = [*recent, now]
+        return "stop"
+
+    def prune(self, servers: list[Server], now: float) -> None:
+        alive = {f"{s.pid}:{s.identities.get(s.pid, '')}" for s in servers}
+        self.warned = {k: v for k, v in self.warned.items() if k.split(":", 1)[1] in alive}
+        self.stops = {k: kept for k, v in self.stops.items() if (kept := [t for t in v if now - t < LOOP_WINDOW_SECONDS])}
+        self.held = {k: v for k, v in self.held.items() if v > now}
+
+
+def rate_key(action: Action) -> str:
+    s = action.server
+    return f"{action.verb}:{s.pid}:{s.identities.get(s.pid, '')}"
 
 
 Killer = Callable[[int, int], None]
@@ -136,19 +234,60 @@ def run_once(
     kill: Killer = os.kill,
     sleep: Callable[[float], None] = time.sleep,
     self_pid: int | None = None,
+    clock: Callable[[], float] = time.time,
 ) -> list[Action]:
     servers = discover(source, config, self_pid=self_pid)
     if config.watch.stop_finished:
         annotate(servers, config.state_path() / "fetched", config.watch.fetch_interval_minutes * 60)
-    actions = plan(servers, source.meminfo(), config)
+    elif config.watch.metrics:
+        annotate(servers)
+    mem = source.meminfo()
+    now = clock()
+    state_path = config.state_path() / STATE_FILE
+    state = WatchState.load(state_path)
+    actions = plan(servers, mem, config, state.holding(now) if apply else None)
+    looping: set[int] = set()
+    if apply:
+        for action in actions:
+            finished = action.verb == "stop" and action.rule in FINISHED_RULES
+            if finished and state.finished_stop(metrics.location(action.server), now) == "loop":
+                looping.add(action.server.pid)
+        if looping:  # those places are held from now on; plan again so the memory rules still see them
+            actions = plan(servers, mem, config, state.holding(now))
     for action in actions:
+        s = action.server
+        if action.verb == "hold":
+            if s.pid in looping:
+                action.outcome = "loop"
+                log.write(
+                    f"LOOP {describe(s)}: stopped {LOOP_STOPS} times in {LOOP_WINDOW_SECONDS // 60} minutes and restarted "
+                    "each time, likely by an agent; leaving finished servers here running for "
+                    f"{LOOP_HOLD_SECONDS // 60} minutes (memory limits still apply). "
+                    "Remove the worktree or stop what restarts it."
+                )
+            else:
+                action.outcome = "hold"
+                log.show(f"HOLD {describe(s)}: {action.reason}; not stopped, it keeps being restarted (see the LOOP line)")
+            continue
+        if action.verb == "stop" and apply:
+            action.outcome = "logged"
+            log.write(f"STOP {describe(s)}: {action.reason}")
+            stop_server(s, source, config.watch.grace_seconds, kill, sleep)
+            continue
         if action.verb == "warn":
-            log.write(f"WARN {describe(action.server)}: {action.reason}")
-        elif apply:
-            log.write(f"STOP {describe(action.server)}: {action.reason}")
-            stop_server(action.server, source, config.watch.grace_seconds, kill, sleep)
+            message = f"WARN {describe(s)}: {action.reason}"
         else:
-            log.write(f"WOULD-STOP {describe(action.server)}: {action.reason} (dry run; use --apply to stop)")
+            message = f"WOULD-STOP {describe(s)}: {action.reason} (dry run; use --apply to stop)"
+        if state.should_log(rate_key(action), s.rss, now):
+            action.outcome = "logged"
+            log.write(message)
+        else:
+            action.outcome = "quiet"
+            log.show(message)
+    state.prune(servers, now)
+    state.save(state_path)
+    if config.watch.metrics:
+        metrics.append(config.state_path(), metrics.entry(servers, mem, actions, apply, config, now), now)
     return actions
 
 

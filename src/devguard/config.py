@@ -63,6 +63,9 @@ protected_paths = []
 # limits (soft_gb, hard_gb). The low-memory floor still applies to them.
 # Example: a test stack that is known to need more memory for a full run.
 memory_exempt_env = []
+# Append one compact JSON sample per pass to <state_dir>/metrics.jsonl (memory, every
+# dev server, actions taken) for `devguard report`. Rotated: about 30 days, at most 20 MB.
+metrics = true
 
 [port]
 # Ports are base + (sha1(absolute path) mod range), so 4000-4999 by default.
@@ -125,6 +128,7 @@ class WatchConfig:
     roots: list[str] = field(default_factory=list)
     protected_paths: list[str] = field(default_factory=list)
     memory_exempt_env: list[str] = field(default_factory=list)
+    metrics: bool = True
 
 
 @dataclass

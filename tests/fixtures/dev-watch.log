@@ -1,0 +1,26 @@
+2026-10-26 10:00:00 WARN port 4101 pid 1001 3.2 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:01:00 WARN port 4101 pid 1001 3.4 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:02:00 WARN port 4101 pid 1001 3.5 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:03:00 WARN port 4101 pid 1001 3.7 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:04:00 WARN port 4101 pid 1001 3.8 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+a line that is not an event
+2026-10-26 10:05:00 WARN port 4101 pid 1001 4.0 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:06:00 WARN port 4101 pid 1001 4.1 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:07:00 WARN port 4101 pid 1001 4.2 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:08:00 WARN port 4101 pid 1001 4.4 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:09:00 WARN port 4101 pid 1001 4.5 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:10:00 WARN port 4101 pid 1001 4.7 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:11:00 WARN port 4101 pid 1001 4.8 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:12:00 STOP port 4101 pid 1001 5.2 GiB /home/dev/code/shop-a/apps/web: over the 5 GiB limit
+2026-10-26 10:15:00 WARN port 4101 pid 1002 3.1 GiB /home/dev/code/shop-a/apps/web: over 3 GiB, restart it soon
+2026-10-26 10:20:00 STOP port 4101 pid 1002 5.1 GiB /home/dev/code/shop-a/apps/web: over the 5 GiB limit
+2026-10-26 10:25:00 STOP port 4101 pid 1003 5.3 GiB /home/dev/code/shop-a/apps/web: over the 5 GiB limit
+2026-10-26 11:00:00 STOP port 4202 pid 2001 1.1 GiB /home/dev/code/shop-b: its work is done (branch feat/b is merged into origin/main)
+2026-10-26 11:02:00 STOP port 4202 pid 2002 1.1 GiB /home/dev/code/shop-b: its work is done (branch feat/b is merged into origin/main)
+2026-10-26 11:04:00 STOP port 4202 pid 2003 1.1 GiB /home/dev/code/shop-b: its work is done (branch feat/b is merged into origin/main)
+2026-10-26 11:06:00 STOP port 4202 pid 2004 1.1 GiB /home/dev/code/shop-b: its work is done (branch feat/b is merged into origin/main)
+2026-10-26 12:00:00 STOP port 4303 pid 3012 2.4 GiB /home/dev/code/shop-c/apps/web: WSL has only 1.2 GiB available (floor 1.5 GiB)
+2026-10-26 13:00:00 STOP port 4303 pid 3013 2.4 GiB /home/dev/code/shop-d: WSL has only 1.2 GiB available (floor 1.5 GiB)
+2026-10-26 14:00:00 STOP port 4303 pid 3014 2.4 GiB /home/dev/code/shop-e: WSL has only 1.2 GiB available (floor 1.5 GiB)
+2026-10-26 15:00:00 STOP port ? pid 4001 0.4 GiB /home/dev/code/shop-f: its work is done (its worktree was removed)
+2026-10-26 15:30:00 STOP port 4404 pid 4002 0.6 GiB /home/dev/code/shop-g: its work is done (branch feat/g was merged and deleted on origin)

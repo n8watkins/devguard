@@ -6,10 +6,12 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from . import __version__, gitinfo
 from . import port as portmod
+from . import report as reportmod
 from . import slot as slotmod
 from . import sweep as sweepmod
 from . import watch as watchmod
@@ -42,6 +44,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--install", action="store_true", help="install a systemd user timer that runs every minute")
     p.add_argument("--uninstall", action="store_true", help="remove the systemd user timer")
     p.add_argument("--log", action="store_true", help="show recent watch events")
+
+    p = sub.add_parser("report", help="how the watcher behaved over time, and what to change")
+    p.add_argument("--since", default="7d", help="period to cover, like 7d, 12h or 2w (default: 7d)")
+    p.add_argument("--json", action="store_true", help="machine-readable output")
+    p.add_argument(
+        "--import-dev-watch", metavar="PATH", type=Path, help="also read the log of the older dev-watch script (read-only)"
+    )
 
     p = sub.add_parser("port", help="print a stable port for a directory: next dev -p $(devguard port)")
     p.add_argument("path", nargs="?", help="directory (default: current directory)")
@@ -159,6 +168,15 @@ def cmd_watch(args: argparse.Namespace, config: Config) -> int:
         watchmod.loop(source, config, args.apply, log)
     except KeyboardInterrupt:
         return 130
+    return 0
+
+
+def cmd_report(args: argparse.Namespace, config: Config) -> int:
+    now = time.time()
+    since = now - reportmod.parse_since(args.since)
+    inputs = reportmod.load(config.state_path(), since, args.import_dev_watch.expanduser() if args.import_dev_watch else None)
+    result = reportmod.build(inputs, config, since, now)
+    print(json.dumps(result, indent=2) if args.json else reportmod.render(result))
     return 0
 
 
@@ -339,6 +357,7 @@ def cmd_config(args: argparse.Namespace, config: Config) -> int:
         f"Watch:       warn {w.soft_gb:g} GiB, stop {w.hard_gb:g} GiB per dev server; floor {w.floor_gb:g} GiB; "
         f"stop finished: {'yes' if w.stop_finished else 'no'}"
     )
+    print(f"             metrics: {config.state_path() / 'metrics.jsonl' if w.metrics else 'off'}")
     if w.roots:
         print(f"             only under: {', '.join(w.roots)}")
     if w.protected_paths:
@@ -359,6 +378,7 @@ def cmd_config(args: argparse.Namespace, config: Config) -> int:
 COMMANDS = {
     "ps": cmd_ps,
     "watch": cmd_watch,
+    "report": cmd_report,
     "port": cmd_port,
     "slot": cmd_slot,
     "worktrees": cmd_worktrees,

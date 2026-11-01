@@ -31,6 +31,7 @@ soft_gb = 0.02
 floor_gb = 0
 grace_seconds = 3
 fetch_interval_minutes = 0
+metrics = true
 [slot]
 dir = "$work/slots"
 [sweep]
@@ -135,6 +136,25 @@ expect "merged server stopped" "$(alive "$done_pid")" no
 expect "big server stopped" "$(alive "$big_pid")" no
 expect "small open server untouched" "$(alive "$small_pid")" yes
 contains "watch log has the stops" "$(dg watch --log)" "STOP port 4101"
+
+step "report: what the watcher did, from metrics.jsonl and an imported dev-watch log"
+expect "metrics.jsonl has one sample per pass" "$(wc -l <"$work/state/metrics.jsonl" | tr -d ' ')" 2
+expect "metrics.jsonl is private" "$(stat -c %a "$work/state/metrics.jsonl" 2>/dev/null || stat -f %Lp "$work/state/metrics.jsonl")" 600
+cat >"$work/dev-watch.log" <<'LOG'
+2026-10-26 10:00:00 WARN port 4101 pid 11 3.2 GiB /srv/old/web: over 3 GiB, restart it soon
+2026-10-26 10:05:00 STOP port 4101 pid 11 5.2 GiB /srv/old/web: over the 5 GiB limit
+2026-10-26 10:08:00 STOP port 4101 pid 12 5.1 GiB /srv/old/web: over the 5 GiB limit
+2026-10-26 10:12:00 STOP port 4101 pid 13 5.3 GiB /srv/old/web: over the 5 GiB limit
+LOG
+out=$(dg report --since 3650d --import-dev-watch "$work/dev-watch.log")
+echo "$out"
+contains "passes are counted" "$out" "Watch passes recorded: 2 (1 apply, 1 dry)"
+contains "the merged stop is reported" "$out" "stopped: branch merged"
+contains "the hard-limit stop is reported" "$out" "stopped: over hard_gb"
+contains "imported events are marked" "$out" "imported from dev-watch log"
+contains "the stop-restart loop is found" "$out" "3 stops in"
+contains "a suggestion is made" "$out" "/srv/old/web hit the hard limit 3 times"
+expect "--json is valid JSON" "$(dg report --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["passes"])')" 2
 kill "$small_pid" 2>/dev/null
 
 step "sweep: dry run shows what would be deleted"
