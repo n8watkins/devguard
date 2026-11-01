@@ -152,10 +152,18 @@ def run_once(
     return actions
 
 
-def loop(source: Source, config: Config, apply: bool, log: Log) -> None:
-    while True:
-        run_once(source, config, apply, log)
-        time.sleep(config.watch.interval_seconds)
+def loop(
+    source: Source, config: Config, apply: bool, log: Log, passes: int | None = None, sleep: Callable[[float], None] = time.sleep
+) -> None:
+    """Run passes forever (or `passes` times); one failed pass is logged, not fatal."""
+    done = 0
+    while passes is None or done < passes:
+        try:
+            run_once(source, config, apply, log)
+        except Exception as exc:  # a long-running watcher must survive one bad pass
+            log.write(f"ERROR pass failed: {type(exc).__name__}: {exc}")
+        done += 1
+        sleep(config.watch.interval_seconds)
 
 
 # --- systemd timer -------------------------------------------------------

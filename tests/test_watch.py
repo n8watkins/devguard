@@ -155,6 +155,22 @@ class RunOnceTest(TempCase):
         self.assertIn("STOP port 4010", self.lines[0])
         self.assertIn("deleted on origin", self.lines[0])
 
+    def test_loop_survives_a_failed_pass(self):
+        source = LinuxProcSource(self.proc.root)
+        calls = []
+        real = source.snapshot
+
+        def flaky():
+            calls.append(1)
+            if len(calls) == 1:
+                raise OSError("proc went away")
+            return real()
+
+        source.snapshot = flaky
+        watch.loop(source, self.config, apply=False, log=self.log, passes=2, sleep=lambda _: None)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("ERROR pass failed: OSError: proc went away", self.lines[0])
+
     def test_log_rotates(self):
         path = self.tmp / "state" / "watch.log"
         path.parent.mkdir(parents=True)
