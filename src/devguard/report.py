@@ -548,7 +548,8 @@ def suggest(r: dict[str, Any]) -> list[dict[str, str]]:
         # server near the cap (failed requests) while memory still overshot it,
         # whereas Turbopack cut the peak from 8.9 to 2.9 GiB. Lead with Turbopack.
         hint = (
-            "Turbopack (`next dev --turbopack`, or drop a forced `--webpack`); avoid heap caps, which make Next restart and fail requests"
+            "Turbopack (`next dev --turbopack`, or drop a forced `--webpack`); "
+            "avoid heap caps, which make Next restart and fail requests"
             if o["tool"] in (None, "next")
             else "NODE_OPTIONS=--max-old-space-size=3072"
         )
