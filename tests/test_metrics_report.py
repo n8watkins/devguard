@@ -487,6 +487,8 @@ class MetricsReportTest(unittest.TestCase):
         joined = "\n".join(s["text"] for s in r["suggestions"])
         self.assertIn("shop apps/web passed 3 GiB in 3 of 4 runs, median 15m after start", joined)
         self.assertIn("Turbopack", joined)
+        self.assertIn("avoid heap caps", joined)
+        self.assertNotIn("max-old-space-size", joined)  # Next.js: never lead with a heap cap
         self.assertNotIn("Soft warnings repeated", joined)  # quiet repeats are not spam
         warn = next(a for a in r["actions"] if a["verb"] == "warn")
         self.assertEqual(warn["devguard"], {"events": 7, "servers": 3})

@@ -544,8 +544,13 @@ def suggest(r: dict[str, Any]) -> list[dict[str, str]]:
     for o in r["offenders"]:
         if len(out) >= 3:
             break
-        hint = "NODE_OPTIONS=--max-old-space-size=3072" + (
-            " or Turbopack (`next dev --turbopack`)" if o["tool"] in (None, "next") else ""
+        # Measured on a Next.js 16 app: a heap cap made Next restart its own dev
+        # server near the cap (failed requests) while memory still overshot it,
+        # whereas Turbopack cut the peak from 8.9 to 2.9 GiB. Lead with Turbopack.
+        hint = (
+            "Turbopack (`next dev --turbopack`, or drop a forced `--webpack`); avoid heap caps, which make Next restart and fail requests"
+            if o["tool"] in (None, "next")
+            else "NODE_OPTIONS=--max-old-space-size=3072"
         )
         if o["runs"] >= 3 and o["runsOverSoft"] / o["runs"] >= 0.5:
             after = f", median {duration(o['medianSecondsToSoft'])} after start" if o["medianSecondsToSoft"] is not None else ""

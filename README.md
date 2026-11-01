@@ -419,7 +419,7 @@ Most expensive projects (GiB-hours of dev server memory)
     143.0   19%  site
 
 What to change
-  - app apps/hub passed 3 GiB in 19 of 23 runs, median 9m after start: try NODE_OPTIONS=--max-old-space-size=3072 or Turbopack (`next dev --turbopack`).
+  - app apps/hub passed 3 GiB in 19 of 23 runs, median 9m after start: try Turbopack (`next dev --turbopack`, or drop a forced `--webpack`); avoid heap caps, which make Next restart and fail requests.
     evidence: typical peak 5.1 GiB, 21 hard-limit stops, 12 worktrees
   - Floor stops happened with 6+ dev servers running: lower slot.count or the number of parallel agents, or raise WSL's memory cap (memory= in .wslconfig).
     evidence: 13 floor stops; median 3 servers otherwise, peak 7
@@ -435,7 +435,7 @@ The suggestions it can make:
 
 | Suggestion | Fires when |
 | --- | --- |
-| Cap an app's heap (`NODE_OPTIONS=--max-old-space-size=3072`) or try Turbopack | An app passed `soft_gb` in at least half of 3 or more runs, or hit `hard_gb` 3 or more times. |
+| Next.js apps: switch to Turbopack (heap caps make Next restart its dev server and fail requests); other Node apps: cap the heap (`NODE_OPTIONS=--max-old-space-size=3072`) | An app passed `soft_gb` in at least half of 3 or more runs, or hit `hard_gb` 3 or more times. |
 | Run fewer servers or agents at once, or raise WSL's memory cap | 2 or more floor stops happened with at least 4 dev servers running (and 2 more than usual), or 3 or more floor stops in log-only data. |
 | Raise `hard_gb` or protect a directory | 2 or more hard-limit or floor stops in one directory were followed by a restart within 10 minutes. |
 | Remove the worktree or find what restarts it | A finished worktree's server was stopped 3 or more times, each within 30 minutes of the last. |
