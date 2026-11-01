@@ -26,8 +26,8 @@ def devguard(*args, **kw):
 class PortTest(TempCase):
     def test_matches_dev_port_sh(self):
         # Values from the original dev-port.sh: 4000 + (sha1(path)[:8] as hex) % 1000.
-        self.assertEqual(port.port_for("/home/natkins/projects/devguard"), 4993)
-        self.assertEqual(port.port_for("/home/natkins"), 4665)
+        self.assertEqual(port.port_for("/home/dev/projects/devguard"), 4204)
+        self.assertEqual(port.port_for("/home/dev"), 4607)
         self.assertEqual(port.port_for("/x", base=8000, span=10) // 10, 800)
 
     def test_resolve_dir_and_overrides(self):
