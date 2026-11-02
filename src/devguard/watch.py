@@ -175,7 +175,8 @@ class WatchState:
             return True
         return False
 
-    def record_stop(self, server: Server, reason: str, now: float) -> None:
+    def record_stop(self, server: Server, reason: str, now: float, requested: bool = False) -> None:
+        """`requested` marks a stop someone asked for (devguard stop), which trays need not announce."""
         self.last_stop = {
             "time": statusmod.iso(now),
             "server": f"{server.tool} {server.kind}",
@@ -183,6 +184,7 @@ class WatchState:
             "pid": server.pid,
             "worktree": home(server.worktree or server.cwd),
             "reason": reason,
+            "requested": requested,
         }
 
     def holding(self, now: float) -> set[str]:
@@ -368,7 +370,7 @@ def stop_matching(
     for s in servers:
         log.write(f"STOP {describe(s)}: {reason}")
         stop_server(s, source, config.watch.grace_seconds, kill, sleep)
-        state.record_stop(s, reason, now)
+        state.record_stop(s, reason, now, requested=True)
     state.save(state_path)
     return servers
 

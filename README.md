@@ -339,7 +339,8 @@ The file updates once a minute while the timer runs, so a copy older than a few 
   "categories": {"dev_servers": {"gb": 10.4, "processes": 6}, "agent_sessions": {"gb": 2.6, "processes": 63},
                  "builds_tests": {"gb": 1.6, "processes": 10}, "other": {"gb": 0.1, "processes": 48}},
   "last_stop": {"time": "2026-11-01T17:48:44Z", "server": "next dev", "port": "4101", "pid": 2433379,
-                "worktree": "~/code/app-wt/search", "reason": "its work is done (branch feat/search is merged into origin/main)"},
+                "worktree": "~/code/app-wt/search", "reason": "its work is done (branch feat/search is merged into origin/main)",
+                "requested": false},
   "alerts": [{"kind": "loop", "where": "~/code/app-wt/dino", "since": "2026-11-01T18:53:00Z", "until": "2026-11-01T19:53:00Z"}]
 }
 ```
@@ -347,6 +348,7 @@ The file updates once a minute while the timer runs, so a copy older than a few 
 `mode` is `apply` or `dry` for a watch pass (and `status` in `devguard status --json`).
 `projects` holds only running servers, grouped by worktree and sorted by memory; `path` is absolute, `worktree` is shortened.
 `command` runs this same devguard from anywhere (append `stop <port>`, for example); it may start with `env PYTHONPATH=...` when devguard runs from a clone.
+`last_stop.requested` is `true` when someone ran `devguard stop` (an agent restarting its preview, or a tray's Stop button) and `false` when watch stopped the server on its own; a tray can announce only the `false` ones.
 `alerts` lists the places where watch detected a stop-restart loop and leaves finished servers alone for now.
 `schema_version` changes only when a field is removed or changes meaning; new fields can appear at any time.
 

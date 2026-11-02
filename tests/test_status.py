@@ -222,6 +222,7 @@ class WatchWritesStatusTest(TempCase):
         self.assertEqual(doc["projects"][0]["servers"][0]["port"], "4011")
         self.assertEqual(doc["last_stop"]["port"], "4010")
         self.assertIn("deleted on origin", doc["last_stop"]["reason"])
+        self.assertFalse(doc["last_stop"]["requested"])
         watch.run_once(source, self.config, apply=True, log=self.log, kill=self.kill, sleep=lambda _: None, self_pid=1)
         self.assertEqual(json.loads(path.read_text())["last_stop"]["port"], "4010")
 
@@ -265,6 +266,7 @@ class StopMatchingTest(TempCase):
         self.assertIn("stopped on request (devguard stop 4012)", self.lines[0])
         state = watch.WatchState.load(self.tmp / "state" / watch.STATE_FILE)
         self.assertIn(state.last_stop["port"], ("4010", "4011"))
+        self.assertTrue(state.last_stop["requested"])
 
 
 class CliStatusTest(TempCase):
