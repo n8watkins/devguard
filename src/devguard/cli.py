@@ -29,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="devguard",
         description="Keep parallel AI coding agents from running a machine out of memory, ports or disk.",
+        epilog="Run devguard <command> -h for that command's options. Docs: https://github.com/n8watkins/devguard",
     )
     parser.add_argument("--version", action="version", version=f"devguard {__version__}")
     parser.add_argument("--config", type=Path, help="config file (default: ~/.config/devguard/config.toml)")
@@ -435,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.command:
         parser.print_help()
-        return 2
+        return 0
     try:
         config = load(args.config.expanduser().absolute() if args.config else None)
         return COMMANDS[args.command](args, config)
