@@ -47,7 +47,7 @@ Pick whichever way you already use; every one installs the same release.
 The package is `agent-devguard` (the name `devguard` was taken on npm and PyPI); the command is always `devguard`.
 The installer, npm and Homebrew install a standalone build that brings its own Python, so they work on machines without one.
 The installer checks the build against the release's `SHA256SUMS`, and its build provenance when [gh](https://cli.github.com) is signed in; it takes `--version v0.1.0` and `--dir <folder>` (`curl ... | sh -s -- --dir /usr/local/bin`), or `DEVGUARD_VERSION` and `DEVGUARD_INSTALL_DIR`.
-The PyPI, npm and Homebrew packages start with the first release; until then, install from a clone:
+PyPI and npm start once their accounts are set up; until then, use the installer, Homebrew, or a clone:
 
 ```sh
 uv tool install git+https://github.com/n8watkins/devguard   # or: pipx install git+https://github.com/n8watkins/devguard
