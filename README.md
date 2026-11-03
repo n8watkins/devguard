@@ -30,28 +30,27 @@ It grew out of the scripts its author used every day to run four or five agents 
 
 ## Install
 
-Needs Python 3.11 or newer and git.
-It has no other dependencies.
-It works on Linux and WSL2; most commands also work on macOS (see [Platform support](#platform-support)).
+devguard runs on Linux and WSL2, and most commands on macOS (see [Platform support](#platform-support)).
+It needs git.
+Pick whichever way you already use; every one installs the same release.
 
-With [uv](https://docs.astral.sh/uv/) (it fetches a suitable Python for you, even on Ubuntu 22.04, which ships 3.10):
+| How | Command | Needs |
+| --- | --- | --- |
+| Installer (recommended) | `curl -fsSL https://raw.githubusercontent.com/n8watkins/devguard/main/install.sh \| sh` | nothing |
+| npm | `npm install -g agent-devguard` | Node to start it |
+| pnpm, yarn, bun | `pnpm add -g agent-devguard`, `yarn global add agent-devguard`, `bun add -g agent-devguard` | the same |
+| Homebrew | `brew install n8watkins/tap/devguard` | nothing |
+| uv | `uv tool install agent-devguard` | nothing (uv fetches Python 3.11+) |
+| pipx | `pipx install agent-devguard` | Python 3.11+ |
+| Try it once | `uvx --from agent-devguard devguard ps`, or `npx -p agent-devguard devguard ps` | |
+
+The package is `agent-devguard` (the name `devguard` was taken on npm and PyPI); the command is always `devguard`.
+The installer, npm and Homebrew install a standalone build that brings its own Python, so they work on machines without one.
+The installer checks the build against the release's `SHA256SUMS`, and its build provenance when [gh](https://cli.github.com) is signed in; it takes `--version v0.1.0` and `--dir <folder>` (`curl ... | sh -s -- --dir /usr/local/bin`), or `DEVGUARD_VERSION` and `DEVGUARD_INSTALL_DIR`.
+The PyPI, npm and Homebrew packages start with the first release; until then, install from a clone:
 
 ```sh
-uv tool install git+https://github.com/n8watkins/devguard
-```
-
-Or with pipx:
-
-```sh
-pipx install git+https://github.com/n8watkins/devguard
-```
-
-Or as a single file, with no installer at all:
-
-```sh
-git clone https://github.com/n8watkins/devguard && cd devguard
-./scripts/build-zipapp.sh                       # writes dist/devguard.pyz
-install -m 755 dist/devguard.pyz ~/.local/bin/devguard
+uv tool install git+https://github.com/n8watkins/devguard   # or: pipx install git+https://github.com/n8watkins/devguard
 ```
 
 Then check it:
@@ -63,10 +62,9 @@ devguard ps
 
 ### Why Python
 
-devguard reads `/proc`, runs git and takes file locks, which the Python standard library does well.
-Python 3 is already installed on every WSL distribution and nearly every Linux machine, so nothing else needs installing.
-It stays stdlib-only (TOML config through `tomllib`), so it installs as a normal package, runs from a clone, or ships as one `.pyz` file.
-A Bun or Go binary would start a little faster, but it would add a toolchain to build and release, and devguard's slowest step is git, not startup.
+devguard reads `/proc`, runs git, holds kernel file locks (`flock`) for `slot` and becomes the command it runs (`exec`), and `sweep` deletes through directory file descriptors with no-replace renames so a symlink swapped in mid-sweep can never redirect a delete.
+Python's standard library does all of that; Node's does not, so a Node version would have to weaken the two commands where safety matters most.
+It stays stdlib-only (TOML config through `tomllib`), so it installs as a normal package, runs from a clone, ships as one `.pyz` file (`scripts/build-zipapp.sh`), or as the standalone build the installer, npm and Homebrew use (`packaging/build-binary.sh`, PyInstaller).
 
 ## Commands
 

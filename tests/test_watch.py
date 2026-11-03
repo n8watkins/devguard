@@ -274,6 +274,11 @@ class InstallTest(TempCase):
         with mock.patch.object(watch, "__file__", str(fake / "devguard" / "watch.py")):
             self.assertEqual(watch.launcher(), ([sys.executable, str(fake)], None))
 
+    def test_launcher_in_a_standalone_build(self):
+        with mock.patch.object(sys, "frozen", True, create=True), mock.patch.object(sys, "executable", "/opt/devguard/devguard"):
+            self.assertEqual(watch.launcher(), (["/opt/devguard/devguard"], None))
+            self.assertEqual(watch.exec_command(True, None), ["/opt/devguard/devguard", "watch", "--once", "--apply"])
+
     @unittest.skipUnless(shutil.which("systemd-analyze"), "needs systemd-analyze")
     def test_units_pass_systemd_analyze_verify(self):
         service, timer = watch.units(False, Path("/my configs/d.toml"), "/usr/bin:/mnt/c/Program Files/x")

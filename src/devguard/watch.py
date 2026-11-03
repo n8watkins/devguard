@@ -403,8 +403,11 @@ def unit_dir() -> Path:
 def launcher() -> tuple[list[str], str | None]:
     """How to start this same devguard later: (argv prefix, PYTHONPATH or None).
 
-    A zipapp runs as `python devguard.pyz`; an installed or cloned package runs as
+    A standalone build (npm, Homebrew, the installer) runs as itself; a zipapp runs
+    as `python devguard.pyz`; an installed or cloned package runs as
     `python -m devguard` with PYTHONPATH pointing at the directory holding it."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable], None
     package_parent = Path(__file__).absolute().parent.parent
     if package_parent.is_file():
         return [sys.executable, str(package_parent)], None

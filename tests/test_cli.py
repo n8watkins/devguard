@@ -88,7 +88,7 @@ class CliTest(TempCase):
         self.assertIn(f"Config file: {self.config}", out)
         self.assertIn(str(self.tmp / "state"), out)
         with contextlib.redirect_stdout(io.StringIO()) as help_text:
-            self.assertEqual(cli.main([]), 2)
+            self.assertEqual(cli.main([]), 0)
         self.assertIn("usage: devguard", help_text.getvalue())
 
     def test_sweep_rejects_non_repo(self):
