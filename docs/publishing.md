@@ -9,7 +9,7 @@ Everything ships from one tag: push `vX.Y.Z` on `main` and `.github/workflows/re
 | `install.sh` | Reads the latest release | Always on |
 | PyPI (`agent-devguard`) | `pypi` job | Repository variable `PYPI_PUBLISH=true` and a trusted publisher on PyPI |
 | npm (`agent-devguard` plus `agent-devguard-<os>-<arch>`) | `npm` job, from the release's builds | Repository variable `NPM_PUBLISH=true` |
-| Homebrew (`n8watkins/tap/devguard`) | `homebrew` job, writes `Formula/devguard.rb` in `n8watkins/homebrew-tap` | Repository variable `HOMEBREW_TAP=true` and secret `HOMEBREW_TAP_TOKEN` |
+| Homebrew (`n8watkins/tap/devguard`) | `homebrew` job, writes `Formula/devguard.rb` in `n8watkins/homebrew-tap` | Repository variable `HOMEBREW_TAP=true` and secret `HOMEBREW_TAP_DEPLOY_KEY` (both set) |
 
 PyPI, npm and Homebrew run only after the GitHub Release is published, and use its files.
 A failed one never undoes the release; fix the cause and re-run the job (each skips versions already published).
@@ -34,12 +34,12 @@ No token is stored anywhere; the workflow publishes with short-lived OIDC creden
 3. After the first release reaches npm: for each of the five packages (`agent-devguard`, `agent-devguard-linux-x64`, `agent-devguard-linux-arm64`, `agent-devguard-darwin-x64`, `agent-devguard-darwin-arm64`), add a trusted publisher (GitHub Actions, `n8watkins/devguard`, `release.yml`) and require two-factor authentication with tokens disallowed.
 4. Delete the `NPM_TOKEN` secret and revoke the token.
 
-## One-time setup: Homebrew
+## Homebrew (set up)
 
-The tap `n8watkins/homebrew-tap` is shared with pass-env.
-1. Create the public repository `n8watkins/homebrew-tap` with a `Formula/` folder, if it does not exist yet.
-2. A fine-grained token with Contents read and write on that one repository, as the secret `HOMEBREW_TAP_TOKEN` here.
-3. The repository variable `HOMEBREW_TAP=true`.
+The tap is `n8watkins/homebrew-tap`, shared by pass-env and devguard.
+The release workflow pushes the formula with an SSH deploy key that can write to that one repository and nothing else: its public half is a deploy key on the tap ("release workflows: pass-env, devguard"), its private half the `HOMEBREW_TAP_DEPLOY_KEY` secret here and in the other repo.
+To rotate it, generate a new key pair, replace the deploy key on the tap, and set the secret again in both repos (`gh secret set HOMEBREW_TAP_DEPLOY_KEY < key`), then delete the private key file.
+The repository variable `HOMEBREW_TAP=true` turns the job on; set it to anything else to pause it.
 
 ## Checking changes to packaging
 

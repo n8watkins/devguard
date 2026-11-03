@@ -154,9 +154,9 @@ jobs:
             npm publish "./$package" --provenance --access public
           done
 
-  # Homebrew: writes Formula/devguard.rb in n8watkins/homebrew-tap. Off until
-  # the maintainer sets the repository variable HOMEBREW_TAP to true and adds
-  # the HOMEBREW_TAP_TOKEN secret.
+  # Homebrew: writes Formula/devguard.rb in n8watkins/homebrew-tap, pushing with
+  # a deploy key that can write to that one repository (the HOMEBREW_TAP_DEPLOY_KEY
+  # secret). On while the repository variable HOMEBREW_TAP is true.
   homebrew:
     needs: publish
     if: vars.HOMEBREW_TAP == 'true'
@@ -168,12 +168,18 @@ jobs:
       - name: Update the formula in the tap
         env:
           GH_TOKEN: ${{ github.token }}
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAP_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
         run: |
-          [ -n "$TAP_TOKEN" ] || { echo "::error::HOMEBREW_TAP_TOKEN is not set"; exit 1; }
+          [ -n "$TAP_KEY" ] || { echo "::error::HOMEBREW_TAP_DEPLOY_KEY is not set"; exit 1; }
+          key="$RUNNER_TEMP/tap-key"
+          (umask 077 && printf '%s\n' "$TAP_KEY" > "$key")
+          trap 'rm -f "$key"' EXIT
+          # GitHub's SSH host keys from its API, so the clone never trusts an unknown host.
+          curl -fsS https://api.github.com/meta | jq -r '.ssh_keys[] | "github.com " + .' > "$RUNNER_TEMP/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts -o StrictHostKeyChecking=yes"
           version="${GITHUB_REF_NAME#v}"
           gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS
-          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/n8watkins/homebrew-tap.git" tap
+          git clone --depth 1 git@github.com:n8watkins/homebrew-tap.git tap
           mkdir -p tap/Formula
           node packaging/homebrew.mjs "$version" SHA256SUMS > tap/Formula/devguard.rb
           cd tap
