@@ -12,7 +12,9 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"
 port=4874
 registry="http://127.0.0.1:$port"
-trap 'kill "$verdaccio" 2>/dev/null || true; rm -rf "$work"' EXIT
+# The registry runs in its own process group (setsid), so cleanup stops it and
+# everything npx started for it, not just npx.
+trap 'kill -- -"$verdaccio" 2>/dev/null || true; rm -rf "$work"' EXIT
 
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$here/pyproject.toml")"
 DEVGUARD_NPM_PARTIAL=1 node "$here/packaging/npm.mjs" "$version" "$dist" "$work/out" >/dev/null
@@ -27,7 +29,7 @@ packages:
 max_body_size: 200mb
 log: { type: stdout, format: pretty, level: error }
 YAML
-npx -y verdaccio@6.1.6 --config "$work/registry/config.yaml" --listen "127.0.0.1:$port" >"$work/registry.log" 2>&1 &
+setsid npx -y verdaccio@6.1.6 --config "$work/registry/config.yaml" --listen "127.0.0.1:$port" >"$work/registry.log" 2>&1 &
 verdaccio=$!
 for _ in $(seq 60); do curl -sf "$registry/-/ping" >/dev/null && break; sleep 1; done
 curl -sf "$registry/-/ping" >/dev/null || { cat "$work/registry.log"; echo "registry did not start"; exit 1; }
