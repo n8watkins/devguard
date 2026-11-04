@@ -10,7 +10,8 @@ permissions:
 # docs/publishing.md.
 jobs:
   verify:
-    # Only the upstream repo publishes: a fork that pushes a tag releases nothing.
+    # release-kit: fork guard. Only the upstream repo publishes: a fork that
+    # pushes a tag releases nothing; every other job needs this one.
     if: github.repository == 'n8watkins/devguard'
     runs-on: ubuntu-24.04
     steps:
