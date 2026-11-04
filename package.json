@@ -1,0 +1,17 @@
+{
+  "name": "devguard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tooling only: release-kit (versions, changelog, tags, commit checks) for devguard, which is Python and publishes as agent-devguard.",
+  "license": "MIT",
+  "scripts": {
+    "lint": "uvx ruff@0.17.3 check src tests && uvx ruff@0.17.3 format --check src tests",
+    "test": "cd tests && python3 -W error::ResourceWarning -m unittest discover -s .",
+    "release": "release-kit release",
+    "release:check": "release-kit check && npm run lint && npm test",
+    "prepare": "git config core.hooksPath .githooks || true"
+  },
+  "devDependencies": {
+    "release-kit": "github:n8watkins/release-kit#v2.6.0"
+  }
+}

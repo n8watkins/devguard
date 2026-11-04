@@ -1,7 +1,7 @@
 # Publishing devguard
 
 How a release reaches each install channel, and the one-time setup each needs.
-Everything ships from one tag: push `vX.Y.Z` on `main` and `.github/workflows/release.yml` does the rest.
+Everything ships from one tag, which [release-kit](https://github.com/n8watkins/release-kit) cuts (`npm run release -- --push`); `.github/workflows/release.yml` does the rest.
 
 | Channel | Built by | Turned on by |
 | --- | --- | --- |
@@ -16,9 +16,9 @@ A failed one never undoes the release; fix the cause and re-run the job (each sk
 
 ## Releasing
 
-1. Set the version in `pyproject.toml` and `src/devguard/__init__.py`.
-2. Merge that to `main`, then tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
-3. The workflow checks the tag is on `main` and both versions match, runs the tests and the end-to-end walk-through, builds on four runners (Linux builds on Ubuntu 22.04, so they run on glibc 2.35 and newer), runs the walk-through against each Linux build, publishes the release, then each channel that is on.
+1. On an up-to-date `main`, preview with `npm run release -- --dry-run`, then run `npm run release -- --push`.
+   release-kit picks the version from the Conventional Commits since the last tag, bumps it in `package.json`, `pyproject.toml`, `uv.lock` and `src/devguard/__init__.py` (`.release.json`), writes the `CHANGELOG.md` section, and lands the release commit and tag through a release pull request (main is protected).
+2. The tag starts the workflow: it checks the tag is on `main` and the versions match, runs the tests and the end-to-end walk-through, builds on four runners (Linux builds on Ubuntu 22.04, so they run on glibc 2.35 and newer), runs the walk-through against each Linux build, publishes the release, then each channel that is on.
 
 ## One-time setup: PyPI
 
