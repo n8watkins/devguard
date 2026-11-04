@@ -1,0 +1,13 @@
+{
+  "versionFiles": [
+    "pyproject.toml",
+    "uv.lock",
+    {
+      "path": "src/devguard/__init__.py",
+      "pattern": "^__version__ = \"(.*)\"$"
+    }
+  ],
+  "workflows": "package",
+  "repository": "n8watkins/devguard",
+  "visibility": "public"
+}
