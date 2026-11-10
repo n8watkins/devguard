@@ -12,6 +12,6 @@
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
-    "release-kit": "github:n8watkins/release-kit#v2.8.1"
+    "release-kit": "github:n8watkins/release-kit#v2.9.0"
   }
 }
