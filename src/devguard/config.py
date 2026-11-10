@@ -107,6 +107,15 @@ max_depth = 4
 # Skip a worktree whose git index or artifacts changed within this many hours.
 min_idle_hours = 24
 
+[spend]
+# Warn (never stop) when an agent session spends this many tokens since you last
+# typed: fresh input, cache writes and output, read from the agents' own logs.
+# watch logs a SPEND line and adds an alert to status.json. 0 turns it off.
+enabled = true
+warn_tokens = 5000000
+# Only sessions whose log changed within this many minutes are read.
+active_minutes = 30
+
 # Extra dev server commands to recognize, in addition to the built-in list
 # (next, vite, wrangler, astro, nuxt, remix, react-router, webpack, storybook).
 # A process matches when every string in `match` appears in its command line.
@@ -161,6 +170,13 @@ class SweepConfig:
 
 
 @dataclass
+class SpendConfig:
+    enabled: bool = True
+    warn_tokens: int = 5_000_000
+    active_minutes: float = 30
+
+
+@dataclass
 class CustomServer:
     name: str
     kind: str
@@ -174,6 +190,7 @@ class Config:
     port: PortConfig = field(default_factory=PortConfig)
     slot: SlotConfig = field(default_factory=SlotConfig)
     sweep: SweepConfig = field(default_factory=SweepConfig)
+    spend: SpendConfig = field(default_factory=SpendConfig)
     custom_servers: list[CustomServer] = field(default_factory=list)
     path: Path | None = None
 
@@ -252,6 +269,8 @@ def parse(data: dict[str, Any], path: Path | None = None) -> Config:
             _fill("slot", config.slot, value)
         elif key == "sweep":
             _fill("sweep", config.sweep, value)
+        elif key == "spend":
+            _fill("spend", config.spend, value)
         elif key == "servers":
             if not isinstance(value, dict) or set(value) - {"custom"}:
                 raise ConfigError("[servers] only supports [[servers.custom]] entries")

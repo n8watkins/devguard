@@ -35,6 +35,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import metrics
+from . import spend as spendmod
 from . import status as statusmod
 from .config import Config
 from .fmt import GIB, home, is_within, size
@@ -256,10 +257,42 @@ def devguard_command() -> list[str]:
 
 
 def status_document(
-    source: Source, config: Config, servers: list[Server], mem: MemInfo, snap, state: WatchState, now: float, mode: str
+    source: Source,
+    config: Config,
+    servers: list[Server],
+    mem: MemInfo,
+    snap,
+    state: WatchState,
+    now: float,
+    mode: str,
+    spending: list[dict] | None = None,
 ) -> dict:
     uid = getattr(source, "uid", os.getuid())
-    return statusmod.build(servers, mem, snap, uid, now, mode, state.last_stop, state.held, LOOP_HOLD_SECONDS, devguard_command())
+    document = statusmod.build(
+        servers, mem, snap, uid, now, mode, state.last_stop, state.held, LOOP_HOLD_SECONDS, devguard_command()
+    )
+    document["alerts"] += spending or []
+    return document
+
+
+def check_spend(config: Config, log: Log, now: float) -> list[dict]:
+    """Warn-only spend check: a SPEND line once per threshold step, alerts for every session over it."""
+    sp = config.spend
+    if not sp.enabled or not sp.warn_tokens:
+        return []
+    try:
+        sessions = spendmod.scan(config.state_path(), sp.active_minutes, now)
+        for s in spendmod.to_warn(sessions, sp.warn_tokens):
+            log.write(
+                f"SPEND {spendmod.describe(s)}: over {spendmod.tokens(sp.warn_tokens)}; check that it is not stuck in a loop"
+            )
+            s.warned = s.turn
+        if any(s.warned == s.turn and s.turn >= sp.warn_tokens for s in sessions):
+            spendmod.remember_warned(config.state_path(), sessions)
+        return [spendmod.alert(s, now) for s in spendmod.over(sessions, sp.warn_tokens)]
+    except Exception as exc:  # the spend check is optional; the pass already did its job
+        print(f"devguard: spend check failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return []
 
 
 def run_once(
@@ -328,8 +361,9 @@ def run_once(
         metrics.append(config.state_path(), metrics.entry(servers, mem, actions, apply, config, now), now)
     stopped = {a.server.pid for a in actions if a.verb == "stop" and apply}
     running = [s for s in servers if s.pid not in stopped]
+    spending = check_spend(config, log, now)
     try:
-        document = status_document(source, config, running, mem, snap, state, now, "apply" if apply else "dry")
+        document = status_document(source, config, running, mem, snap, state, now, "apply" if apply else "dry", spending)
     except Exception as exc:  # the status file is optional; the pass already did its job
         print(f"devguard: could not build status: {type(exc).__name__}: {exc}", file=sys.stderr)
     else:

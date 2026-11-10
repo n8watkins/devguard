@@ -10,6 +10,7 @@ devguard slot -- npx playwright test # at most 4 heavy jobs at once across all a
 devguard sweep                       # dry run: build output in finished worktrees you can delete
 devguard report --since 7d           # how the watcher behaved and what to change
 devguard status                      # memory by use, servers by project, last stop (also status.json)
+devguard spend                       # tokens each agent session spent since you last typed
 ```
 
 ## Why
@@ -147,7 +148,7 @@ A good way to start: `devguard watch --install`, read `devguard watch --log` for
 
 ### devguard status
 
-A one-screen summary: memory, what uses it, the dev servers grouped by worktree, the last stop and any restart-loop alerts.
+A one-screen summary: memory, what uses it, the dev servers grouped by worktree, the last stop, and any restart-loop or spend alerts.
 
 ```console
 $ devguard status
@@ -278,6 +279,28 @@ With no repository argument, sweep uses `sweep.repos` from the config, or the re
 `--verbose` measures and lists the artifacts of kept worktrees too.
 Hard-linked files (for example from a pnpm store) are counted and reported separately, since deleting them frees less than their size.
 
+### devguard spend
+
+`devguard spend` lists the agent sessions that wrote to their log in the last 30 minutes, with the tokens each spent since you last typed (the turn) and in the whole session.
+A runaway loop looks like one turn that keeps growing: many model calls and no new prompt.
+
+```
+AGENT   TURN  CALLS  SESSION    WHERE
+claude  6.2M    412     7.9M    ~/code/app
+codex   180k     12     2.1M    ~/code/site
+
+TURN = tokens since the last prompt (fresh input, cache writes, output); warn at 5.0M per turn.
+```
+
+Counted are fresh input, cache writes and output (reasoning included); cache reads are left out, since they are cheap and grow with every call.
+It reads Claude Code's `~/.claude/projects/**/*.jsonl` and Codex's `~/.codex/sessions/**/*.jsonl`, keeps only usage numbers and where each turn starts, and never stores or prints what was said.
+Each run reads only what was added since the last one.
+
+`devguard watch` runs the same check on every pass.
+When a turn passes `spend.warn_tokens` (5 million by default), it logs one `SPEND` line, and again at each further multiple; every session over the limit is also an alert in `status.json` and in `devguard status`.
+It only warns, it never stops an agent.
+The idea and the measure come from [curb](https://github.com/misty-step/curb) by misty-step (MIT, archived), which watches turn spend the same way.
+
 ### devguard config
 
 `devguard config` prints the config path, state dir, slot dir and the limits in effect.
@@ -347,7 +370,7 @@ The file updates once a minute while the timer runs, so a copy older than a few 
 `projects` holds only running servers, grouped by worktree and sorted by memory; `path` is absolute, `worktree` is shortened.
 `command` runs this same devguard from anywhere (append `stop <port>`, for example); it may start with `env PYTHONPATH=...` when devguard runs from a clone.
 `last_stop.requested` is `true` when someone ran `devguard stop` (an agent restarting its preview, or a tray's Stop button) and `false` when watch stopped the server on its own; a tray can announce only the `false` ones.
-`alerts` lists the places where watch detected a stop-restart loop and leaves finished servers alone for now.
+`alerts` lists the places where watch detected a stop-restart loop and leaves finished servers alone for now (`"kind": "loop"`), and the agent sessions whose current turn is over `spend.warn_tokens` (`"kind": "spend"`, with `agent`, `where`, `turn_tokens`, `turn_calls`, `session_tokens` and `turn_minutes`).
 `schema_version` changes only when a field is removed or changes meaning; new fields can appear at any time.
 
 ### devguard report
@@ -475,6 +498,9 @@ An unknown key is an error, so a typo never silently falls back to a default.
 | `sweep.artifacts` | see above | Directory names that count as build output. |
 | `sweep.max_depth` | `4` | How deep to look below each worktree root. |
 | `sweep.min_idle_hours` | `24` | Skip worktrees whose git index or artifacts changed more recently. |
+| `spend.enabled` | `true` | Check agent token spend on every watch pass. |
+| `spend.warn_tokens` | `5000000` | Warn when one turn (tokens since the last prompt) passes this. `0` turns warnings off. |
+| `spend.active_minutes` | `30` | Only sessions whose log changed within this many minutes are read. |
 | `[[servers.custom]]` | none | Extra server commands: `name`, `kind` (`"dev"` or `"preview"`) and `match`, a list of strings that must all appear in the command line. |
 
 An example for a machine where a test stack runs dev servers that need more memory during a full run, and where agents work under `~/code`:
