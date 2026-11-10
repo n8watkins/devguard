@@ -381,5 +381,12 @@ def render(document: dict[str, Any]) -> str:
         parts = [stop.get(k) for k in ("time", "server")] + [f"port {stop.get('port', '?')}", stop.get("worktree")]
         lines.append(f"Last stop: {' '.join(str(p) for p in parts if p)}: {stop.get('reason', '')}")
     for alert in document["alerts"]:
-        lines.append(f"Restart loop: {alert['where']} (finished servers left running until {alert['until']})")
+        if alert.get("kind") == "spend":
+            where = f" in {alert['where']}" if alert.get("where") else ""
+            lines.append(
+                f"Spend: {alert['agent']}{where} spent {alert['turn_tokens']:,} tokens in {alert['turn_calls']} calls "
+                "since the last prompt"
+            )
+        else:
+            lines.append(f"Restart loop: {alert['where']} (finished servers left running until {alert['until']})")
     return "\n".join(lines)

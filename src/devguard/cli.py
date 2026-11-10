@@ -13,6 +13,7 @@ from . import __version__, gitinfo
 from . import port as portmod
 from . import report as reportmod
 from . import slot as slotmod
+from . import spend as spendmod
 from . import status as statusmod
 from . import sweep as sweepmod
 from . import watch as watchmod
@@ -83,6 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--verbose", "-v", action="store_true", help="measure and list artifacts of blocked worktrees too")
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser("spend", help="tokens each running agent session spent since you last typed")
+    p.add_argument("--json", action="store_true", help="print JSON")
     p = sub.add_parser("config", help="show the config file path and effective settings")
     p.add_argument("--default", action="store_true", help="print the documented default config")
     return parser
@@ -384,6 +387,28 @@ def print_sweep_plan(candidates: list[sweepmod.Candidate], verbose: bool) -> Non
     print("\nDry run: nothing was deleted. Run again with --apply to delete.")
 
 
+def cmd_spend(args: argparse.Namespace, config: Config) -> int:
+    sp = config.spend
+    now = time.time()
+    sessions = spendmod.scan(config.state_path(), sp.active_minutes, now)
+    if args.json:
+        print(json.dumps([{**spendmod.alert(s, now), "log": home(s.path)} for s in sessions], indent=2))
+        return 0
+    if not sessions:
+        print(f"No agent session wrote to its log in the last {sp.active_minutes:g} minutes.")
+        return 0
+    rows = []
+    for s in sessions:
+        flag = "OVER" if sp.warn_tokens and s.turn >= sp.warn_tokens else ""
+        rows.append(
+            [s.agent, spendmod.tokens(s.turn), str(s.calls), spendmod.tokens(s.total), flag, home(s.cwd) if s.cwd else "?"]
+        )
+    print(table(["AGENT", "TURN", "CALLS", "SESSION", "", "WHERE"], rows, right={1, 2, 3}))
+    limit = f"warn at {spendmod.tokens(sp.warn_tokens)} per turn" if sp.enabled and sp.warn_tokens else "warnings off"
+    print(f"\nTURN = tokens since the last prompt (fresh input, cache writes, output); {limit}.")
+    return 0
+
+
 def cmd_config(args: argparse.Namespace, config: Config) -> int:
     if args.default:
         print(DEFAULT_TOML, end="")
@@ -414,6 +439,15 @@ def cmd_config(args: argparse.Namespace, config: Config) -> int:
         f"Sweep:       {', '.join(config.sweep.artifacts)} (depth {config.sweep.max_depth}, "
         f"idle {config.sweep.min_idle_hours:g}h)"
     )
+    sp = config.spend
+    print(
+        "Spend:       "
+        + (
+            f"warn at {spendmod.tokens(sp.warn_tokens)} tokens per turn, sessions active in the last {sp.active_minutes:g} min"
+            if sp.enabled and sp.warn_tokens
+            else "off"
+        )
+    )
     return 0
 
 
@@ -427,6 +461,7 @@ COMMANDS = {
     "slot": cmd_slot,
     "worktrees": cmd_worktrees,
     "sweep": cmd_sweep,
+    "spend": cmd_spend,
     "config": cmd_config,
 }
 

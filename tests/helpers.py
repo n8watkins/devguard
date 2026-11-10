@@ -153,6 +153,9 @@ class TempCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="devguard-test-")
         self.tmp = Path(os.path.realpath(self._tmp.name))
+        # Never read the real agents' session logs (the spend check in watch passes).
+        os.environ["DEVGUARD_AGENT_HOME"] = str(self.tmp / "agent-home")
 
     def tearDown(self) -> None:
+        os.environ.pop("DEVGUARD_AGENT_HOME", None)
         self._tmp.cleanup()
